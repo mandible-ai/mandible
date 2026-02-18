@@ -1,103 +1,82 @@
-# Colony
+# Mandible
 
-A universal stigmergy framework for agent coordination through environmental signals.
+A universal stigmergy framework for autonomous agent coordination.
 
-Instead of agents talking to each other through message passing, agents coordinate by reading from and writing to a shared environment - the same way ant colonies self-organize through pheromone trails. No agent knows about any other agent. Complex behavior emerges from simple rules.
+Instead of wiring agents together with message passing, Mandible agents coordinate by depositing and sensing **signals** in a shared **environment** — the same way ant colonies self-organize through pheromone trails. No orchestrator. No message routing. Complex behavior emerges from simple rules.
+
+[mandible.dev](https://mandible.dev)
 
 ## Why stigmergy over message passing?
 
-Most multi-agent frameworks (CrewAI, AutoGen, LangGraph) coordinate agents through direct messaging. This reimplements distributed systems problems: service discovery, message routing, consensus, backpressure - but for LLMs.
+Most multi-agent frameworks coordinate agents through direct messaging. This reimplements distributed systems problems — service discovery, routing, consensus, backpressure — but for LLMs.
 
-Stigmergy sidesteps all of that. The environment carries the state. Agents are stateless reactive workers. You never need to answer "who should I tell about this?" - you just modify the environment, and whoever cares will notice.
+Stigmergy sidesteps all of that. The environment carries the state. Agents are stateless reactive workers. You never need to answer "who should I tell about this?" — you just modify the environment, and whoever cares will notice.
 
 **What you get:**
 
-- **Observability for free** — `ls` the signals directory and see the full system state. The environment *is* the log.
+- **Observability for free** — the environment *is* the log. `ls` the signals directory and see the full system state.
 - **Fault tolerance** — an agent dies, the signal remains, another agent picks it up. No lost messages.
 - **Zero coupling** — add or remove colony types without touching any existing colony's configuration.
 - **Natural load balancing** — spin up more instances of any colony type. They self-organize around available work.
-- **Time travel** — new agents see the full environment state immediately. No message replay needed.
-
-## Core concepts
-
-Every concept maps to a biological analogy:
-
-| Framework | Biology | Description |
-|-----------|---------|-------------|
-| **Signal** | Pheromone | A marker deposited in the environment. Has a type, payload, concentration (strength), and TTL. |
-| **Environment** | Substrate | The shared medium agents read from and write to. Filesystem, database, GitHub, Kubernetes. |
-| **Colony** | Ant colony | A group of identical agents with shared sensors, rules, and actuators. |
-| **Sensor** | Antennae | How a colony perceives signals. A query pattern like `task:ready` or `review:*`. |
-| **Rule** | Instinct | A stimulus→response mapping: "when I sense X, do Y and deposit Z." |
-| **Concentration** | Pheromone strength | Signal priority. Starts at 1.0, decays over time. Agents prioritize stronger signals. |
-| **Decay** | Evaporation | Signals weaken and eventually disappear, preventing stale work from accumulating. |
+- **Provenance built in** — every signal is signed by the colony that produced it. Bridges attest transfers. Trust is verifiable.
 
 ## Quick start
 
 ```bash
-npm install
-node --import tsx examples/code-pipeline/index.ts
+npm install mandible
 ```
-
-Open a second terminal to watch the stigmergy loop in real time:
-
-```bash
-watch -n 0.5 'ls -la /tmp/stigmergy-demo/signals/'
-```
-
-You'll see JSON files appear and disappear as colonies deposit and withdraw signals — pheromone trails forming and evaporating on the filesystem.
-
-## Defining a colony
-
-Colonies are defined with a fluent DSL. Each colony declares what it senses, what rules it follows, and what it deposits. That's it.
 
 ```typescript
-import { colony, createRuntime, FilesystemEnvironment } from './src/index.js';
+import { colony, createRuntime, FilesystemEnvironment, withAgent } from 'mandible';
 
-const env = new FilesystemEnvironment({ root: '/tmp/my-env' });
+const env = new FilesystemEnvironment({ root: './.mandible/signals' });
 
-// A Shaper colony: watches for tasks, produces artifacts
-const shaperDef = colony('shaper')
+const shaper = colony('shaper')
   .in(env)
   .sense('task:ready', { unclaimed: true })
-  .do('shape-code', async (signal, ctx) => {
-    const result = await doWork(signal.payload);
-    await ctx.deposit('artifact:shaped', result, {
-      causedBy: [signal.id],
-    });
-    await ctx.withdraw(signal.id);
-  })
-  .concurrency(3)
-  .claim('lease', 30_000)
-  .build();
-
-// A Critic colony: watches for artifacts, produces reviews
-const criticDef = colony('critic')
-  .in(env)
-  .sense('artifact:shaped', { unclaimed: true })
-  .do('review', async (signal, ctx) => {
-    const review = await reviewWork(signal.payload);
-    if (review.passes) {
-      await ctx.deposit('review:approved', { artifact: signal.id });
-    } else {
-      await ctx.deposit('review:changes-needed', review.feedback, {
-        ttl: 60_000, // auto-evaporates if nobody picks it up
-      });
-    }
-    await ctx.withdraw(signal.id);
-  })
+  .do(withAgent({
+    systemPrompt: 'You are a code shaper. Given a task, write the implementation.',
+    tools: ['Read', 'Write', 'Bash'],
+  }))
   .concurrency(2)
   .claim('lease', 30_000)
   .build();
 
+const critic = colony('critic')
+  .in(env)
+  .sense('task:shaped', { unclaimed: true })
+  .do(withAgent({
+    systemPrompt: 'You are a code critic. Review the implementation for correctness and style.',
+    tools: ['Read'],
+  }))
+  .claim('exclusive')
+  .build();
+
 // Start them — they self-organize from here
-const shaperRuntime = createRuntime(shaperDef);
-const criticRuntime = createRuntime(criticDef);
+const shaperRuntime = createRuntime(shaper);
+const criticRuntime = createRuntime(critic);
 await shaperRuntime.start();
 await criticRuntime.start();
 ```
 
 No colony references any other colony. They coordinate entirely through signals in the environment.
+
+## Core concepts
+
+Every concept maps to a biological analogy:
+
+| Mandible | Biology | Description |
+|----------|---------|-------------|
+| **Signal** | Pheromone | A typed marker deposited in the environment with a payload, concentration, and TTL. |
+| **Environment** | Substrate | The shared medium agents read from and write to. Filesystem, Dolt, GitHub, Kubernetes. |
+| **Colony** | Ant caste | A group of identical agents with shared sensors, rules, and claim strategy. |
+| **Sensor** | Antennae | How a colony perceives signals. A query pattern like `task:ready` or `review:*`. |
+| **Rule** | Instinct | A stimulus→response mapping: "when I sense X, do Y and deposit Z." |
+| **Concentration** | Pheromone strength | Signal priority (1.0 → 0.0). Agents prioritize stronger signals. |
+| **Decay** | Evaporation | Signals weaken over time, preventing stale work from accumulating. |
+| **Colony Identity** | Colony scent | Ed25519 keypair. Every signal is signed by the colony that produced it. |
+| **Attestation** | Trail markers | Bridges sign transfers, creating a verifiable chain of custody across environments. |
+| **Sentinel** | Guard ant | Monitors an environment for signals that fail provenance verification. |
 
 ## The stigmergy loop
 
@@ -110,19 +89,19 @@ sense → match rules → claim → execute action → deposit → (others sense
 1. **Sense** — poll or watch the environment for signals matching the colony's sensor queries.
 2. **Match** — evaluate rules against sensed signals, ordered by priority.
 3. **Claim** — attempt to claim the signal (prevents duplicate work across concurrent agents).
-4. **Act** — execute the matched rule's action with the signal and an action context.
-5. **Deposit** — leave new signals in the environment as output.
+4. **Act** — execute the matched rule's action (LLM call, shell command, custom function).
+5. **Deposit** — leave new signed signals in the environment as output.
 
 Other colonies sense those deposited signals and the cycle continues. Complex workflows emerge from simple local rules.
 
-## DSL reference
+## Colony DSL
 
 ```typescript
 colony('name')
   .in(env)                                        // which environment
   .sense('type:pattern', { unclaimed: true })     // what to watch for
   .when(signal => signal.payload.priority > 0)    // optional guard
-  .do('rule-name', async (signal, ctx) => { })    // action
+  .do(withAgent({ tools: ['Read', 'Write'] }))    // action provider
   .concurrency(3)                                 // max parallel agents
   .claim('lease', 30_000)                         // claim strategy
   .poll(2000)                                     // sensor poll interval (ms)
@@ -141,6 +120,18 @@ colony('name')
 | `optimistic` | Let multiple agents start, reconcile after. |
 | `none` | No claiming. Multiple agents may process the same signal. |
 
+## Action providers
+
+Action providers wrap external capabilities into a standard interface for colony rules.
+
+| Provider | Use case | Backed by |
+|----------|----------|-----------|
+| `withAgent` | Coding agents, complex reasoning | Claude Code SDK |
+| `withStructuredOutput` | Classification, review, decisions | Anthropic, OpenAI, Vercel AI SDK |
+| `withBash` | Build commands, test runners, linters | Shell execution |
+
+The `withAgent` provider assembles context by walking signal lineage (caused_by chains), giving the LLM full awareness of the work pipeline state.
+
 ## Signal types
 
 Signal types use a `domain:state` convention and support glob patterns for sensing:
@@ -152,33 +143,35 @@ Signal types use a `domain:state` convention and support glob patterns for sensi
 'review:*'          // any review signal
 ```
 
+## Trust and attestation
+
+Mandible provides cryptographic provenance for signals using `@noble/ed25519`:
+
+- **Colony signing** — each colony generates an Ed25519 keypair and signs every signal it deposits. Signatures cover the semantic content (type, payload, lineage) but not mutable state (concentration, timestamps).
+- **Bridge attestation** — when a signal crosses environments via a bridge, the bridge appends a signed attestation. Each attestation signs over the previous, creating a linked chain of custody.
+- **Trust levels** — signals are classified as `verified` (valid signature + chain), `attested` (bridge chain valid, origin unsigned), `unverified` (no provenance), or `rejected` (verification failed).
+- **Sentinel colonies** — monitor an environment for trust violations and deposit report signals that other colonies can react to.
+
 ## Environment adapters
 
-The framework is environment-agnostic. Any shared substrate that supports observe/deposit/withdraw/watch can be an environment.
+Any shared substrate that supports observe/deposit/withdraw/claim/watch can be a Mandible environment.
 
 ### Filesystem (implemented)
 
-Signals are JSON files. Claims use atomic file operations. History lives in a `withdrawn/` directory. You can observe the entire system state with `ls` and `cat`.
+Signals are JSON files. Claims use atomic file operations. History lives in a `withdrawn/` directory.
 
 ```typescript
-import { FilesystemEnvironment } from './src/environments/filesystem/index.js';
+import { FilesystemEnvironment } from 'mandible';
 
 const env = new FilesystemEnvironment({
-  root: '/tmp/my-pipeline',
-  name: 'code-pipeline',
+  root: './.mandible/signals',
+  name: 'local',
 });
 ```
 
 ### Dolt (stubbed)
 
-[Dolt](https://www.dolthub.com/) is a SQL database with Git-like versioning. Signals become rows, claims use `SELECT ... FOR UPDATE`, and Dolt's built-in branching/merging/diffing opens up powerful patterns:
-
-- Shaper colonies work on a Dolt branch
-- Critic colonies review by diffing branches
-- Keeper colonies merge branches (Dolt merge = Git merge for data)
-- Full signal history via `dolt_history` — queryable time travel
-
-The adapter interface is identical to the filesystem adapter, so colony definitions work unchanged across either environment.
+[Dolt](https://www.dolthub.com/) is a SQL database with Git-like versioning. Signals become rows, branching enables parallel work, and `dolt_history` provides queryable time travel for the full signal history.
 
 ### Writing your own
 
@@ -186,6 +179,7 @@ Implement the `Environment` interface:
 
 ```typescript
 interface Environment {
+  name: string;
   observe(query: SignalQuery): Promise<Signal[]>;
   deposit(signal): Promise<Signal>;
   withdraw(signalId: string): Promise<void>;
@@ -203,57 +197,55 @@ interface Environment {
 ```
 src/
   core/
-    types.ts            Core type definitions (Signal, Environment, Colony, Runtime)
-    signal.ts           Signal creation, matching, decay math, priority sorting
+    types.ts            Core type system (Signal, Environment, Colony, Trust)
+    signal.ts           Signal creation, matching, decay, priority sorting
     runtime.ts          Colony runtime — the stigmergy loop engine
+    attestation.ts      Ed25519 signing & verification (@noble/ed25519)
   dsl/
     builder.ts          Fluent colony definition DSL
   environments/
-    filesystem/         Working filesystem adapter
-    dolt/               Dolt adapter (stubbed with implementation notes)
-  index.ts              Public API
+    filesystem/         Filesystem adapter (JSON files + atomic claims)
+    dolt/               Dolt adapter (stub)
+  providers/
+    agent.ts            withAgent — Claude Code SDK
+    structured-output.ts withStructuredOutput — multi-model
+    bash.ts             withBash — shell commands
+    context.ts          Context assembly from signal lineage
+  patterns/
+    bridge.ts           SignalBridge — cross-environment mirroring with attestation
+    sentinel.ts         Sentinel — trust monitoring and violation reporting
 
 examples/
   code-pipeline/        Working demo: Shaper → Critic → Keeper pipeline
 ```
 
-## Example: code pipeline demo
+## Example: code pipeline
 
 The included demo seeds 5 coding tasks into a filesystem environment. Three colonies self-organize to process them:
 
-- **Shaper** (concurrency: 2) — picks up `task:ready` signals, produces `artifact:shaped` signals
-- **Critic** (concurrency: 2) — reviews shaped artifacts, deposits `review:approved` or `review:changes-needed`
-- **Keeper** (concurrency: 1) — merges approved artifacts, deposits `artifact:merged`
+- **Shaper** (concurrency: 2) — picks up `task:ready` signals, produces `task:shaped` signals
+- **Critic** (concurrency: 2) — reviews shaped artifacts, deposits `review:approved` or `review:rejected`
+- **Keeper** (concurrency: 1) — commits approved work, deposits `task:complete`
 
 No orchestrator. No message broker. No routing logic. The colonies discover work through the environment and coordinate through signals.
 
-```
-$ node --import tsx examples/code-pipeline/index.ts
-
-🚀 Starting colonies...
-📋 Seeding tasks into environment...
-
-[shaper] Picking up task: auth-middleware
-[shaper] Picking up task: rate-limiter
-[shaper] Shaped "auth-middleware" (60 lines)
-[critic] Reviewing artifact for task: auth-middleware
-[shaper] Shaped "rate-limiter" (96 lines)
-[critic] ✓ Approved: Code for "auth-middleware" looks good.
-[keeper] Merging approved artifact: auth-middleware
-[critic] ✗ Changes needed: Code for "rate-limiter" needs work.
-[keeper] Merged → commit 3v35a00f
+```bash
+node --import tsx examples/code-pipeline/index.ts
 ```
 
 ## Roadmap
 
+- [ ] `mandible dev` — CLI that runs colonies + opens a live dashboard
+- [ ] Real-time dashboard with signal flow visualization, colony stats, lineage graph
+- [ ] `create-mandible` — project scaffolding with starter templates
+- [ ] Wire `withAgent` to Claude Code SDK for real LLM-powered colonies
+- [ ] Comprehensive test suite (vitest, 90%+ coverage on core)
 - [ ] Dolt environment adapter (full implementation)
-- [ ] GitHub environment adapter (PRs/labels/comments as signals)
-- [ ] Gardener colony pattern (rework loops, stale signal cleanup)
+- [ ] GitHub environment adapter (issues/PRs/comments as signals)
+- [ ] CloudEvents bridge adapter (interop with CNCF event-driven infra)
 - [ ] Colony scaler (auto-adjust concurrency based on signal backlog)
-- [ ] YAML colony definitions (declarative, no code)
-- [ ] CLI tooling (`colony init`, `colony start`, `colony status`)
-- [ ] Multi-environment pipelines (signals flow across substrates)
-- [ ] Observability dashboard (signal flow visualization)
+- [ ] Trust enforcement (environment-level deposit-time verification)
+- [ ] Hosted observability platform (tracing, telemetry, team workspaces)
 
 ## License
 
