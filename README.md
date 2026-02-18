@@ -2,13 +2,13 @@
 
 A universal stigmergy framework for agent coordination through environmental signals.
 
-Instead of agents talking to each other through message passing, agents coordinate by reading from and writing to a shared environment — the same way ant colonies self-organize through pheromone trails. No agent knows about any other agent. Complex behavior emerges from simple rules.
+Instead of agents talking to each other through message passing, agents coordinate by reading from and writing to a shared environment - the same way ant colonies self-organize through pheromone trails. No agent knows about any other agent. Complex behavior emerges from simple rules.
 
 ## Why stigmergy over message passing?
 
-Most multi-agent frameworks (CrewAI, AutoGen, LangGraph) coordinate agents through direct messaging. This reimplements distributed systems problems — service discovery, message routing, consensus, backpressure — but for LLMs.
+Most multi-agent frameworks (CrewAI, AutoGen, LangGraph) coordinate agents through direct messaging. This reimplements distributed systems problems — service discovery, message routing, consensus, backpressure - but for LLMs.
 
-Stigmergy sidesteps all of that. The environment carries the state. Agents are stateless reactive workers. You never need to answer "who should I tell about this?" — you just modify the environment, and whoever cares will notice.
+Stigmergy sidesteps all of that. The environment carries the state. Agents are stateless reactive workers. You never need to answer "who should I tell about this?" - you just modify the environment, and whoever cares will notice.
 
 **What you get:**
 
