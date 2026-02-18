@@ -1,0 +1,25 @@
+{
+  "name": "@stigmergy/framework",
+  "version": "0.1.0",
+  "description": "Universal stigmergy framework for agent coordination through environmental signals",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch examples/code-pipeline/index.ts",
+    "demo": "tsx examples/code-pipeline/index.ts",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.0",
+    "nanoid": "^5.0.0",
+    "eventemitter3": "^5.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "tsx": "^4.16.0",
+    "vitest": "^2.0.0",
+    "@types/node": "^22.0.0"
+  }
+}
