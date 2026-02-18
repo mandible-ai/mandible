@@ -15,7 +15,8 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "paths": {
-      "@stigmergy/*": ["./src/*"]
+      "mandible": ["./src/index.ts"],
+      "mandible/*": ["./src/*"]
     }
   },
   "include": ["src/**/*", "examples/**/*"],

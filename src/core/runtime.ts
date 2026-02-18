@@ -27,6 +27,7 @@ import type {
 } from './types.js';
 import { prioritize } from './signal.js';
 import { DEFAULT_DECAY_POLICY } from './types.js';
+import { EventBus, type RuntimeEventData, type RuntimeEventCallback } from './events.js';
 
 type EventHandler = (...args: any[]) => void;
 
@@ -52,14 +53,28 @@ export class ColonyRuntime implements IColonyRuntime {
   private decayPolicy: DecayPolicy;
   private totalProcessingMs = 0;
 
-  constructor(definition: ColonyDefinition, decayPolicy?: Partial<DecayPolicy>) {
+  readonly events: EventBus;
+  private _onEvent?: RuntimeEventCallback;
+
+  constructor(
+    definition: ColonyDefinition,
+    options?: {
+      decayPolicy?: Partial<DecayPolicy>;
+      onEvent?: RuntimeEventCallback;
+      eventBus?: EventBus;
+    }
+  ) {
     this.definition = definition;
+    const decayPolicy = options?.decayPolicy;
     this.decayPolicy = { ...DEFAULT_DECAY_POLICY, ...decayPolicy };
+    this.events = options?.eventBus ?? new EventBus();
+    this._onEvent = options?.onEvent;
   }
 
   get state(): RuntimeState { return this._state; }
   get activeCount(): number { return this._activeCount; }
   get stats(): RuntimeStats { return { ...this._stats }; }
+  get name(): string { return this.definition.name; }
 
   // ----------------------------------------------------------
   // Lifecycle
@@ -68,6 +83,7 @@ export class ColonyRuntime implements IColonyRuntime {
   async start(): Promise<void> {
     if (this._state === 'running') return;
     this._state = 'running';
+    this.emitEvent({ type: 'colony:started', colony: this.definition.name, timestamp: Date.now() });
     this.emit('colony:started', this.definition.name);
     this.log('info', `Colony "${this.definition.name}" started (concurrency: ${this.definition.concurrency})`);
 
@@ -109,12 +125,13 @@ export class ColonyRuntime implements IColonyRuntime {
     }
 
     this._state = 'stopped';
+    this.emitEvent({ type: 'colony:stopped', colony: this.definition.name, timestamp: Date.now() });
     this.emit('colony:stopped', this.definition.name);
     this.log('info', `Colony "${this.definition.name}" stopped.`);
   }
 
   // ----------------------------------------------------------
-  // Event system
+  // Event system (legacy string-based)
   // ----------------------------------------------------------
 
   on(event: RuntimeEvent, handler: EventHandler): void {
@@ -130,6 +147,17 @@ export class ColonyRuntime implements IColonyRuntime {
       for (const handler of handlers) {
         try { handler(...args); } catch { /* don't let event handlers crash the runtime */ }
       }
+    }
+  }
+
+  // ----------------------------------------------------------
+  // Structured event emitter (for dashboard / observability)
+  // ----------------------------------------------------------
+
+  private emitEvent(event: RuntimeEventData): void {
+    this.events.emit(event);
+    if (this._onEvent) {
+      try { this._onEvent(event); } catch { /* never crash the runtime */ }
     }
   }
 
@@ -206,9 +234,19 @@ export class ColonyRuntime implements IColonyRuntime {
     this.processingSignals.add(signal.id);
     this._activeCount++;
     const startTime = Date.now();
+    const colonyName = this.definition.name;
 
     try {
-      // 1. Find matching rule
+      // 1. Sensed
+      this.emitEvent({
+        type: 'signal:sensed',
+        colony: colonyName,
+        timestamp: Date.now(),
+        signalId: signal.id,
+        signalType: signal.type,
+      });
+
+      // 2. Find matching rule
       const rule = await this.matchRule(signal);
       if (!rule) {
         this.processingSignals.delete(signal.id);
@@ -216,18 +254,34 @@ export class ColonyRuntime implements IColonyRuntime {
         return;
       }
 
-      // 2. Claim (if strategy requires it)
+      this.emitEvent({
+        type: 'signal:matched',
+        colony: colonyName,
+        timestamp: Date.now(),
+        signalId: signal.id,
+        signalType: signal.type,
+        rule: rule.name,
+      });
+
+      // 3. Claim (if strategy requires it)
       if (this.definition.claimStrategy !== 'none') {
         const leaseDuration = this.definition.config?.actionTimeout ?? 60_000;
         const claimed = await this.definition.environment.claim(
           signal.id,
-          this.definition.name,
+          colonyName,
           leaseDuration
         );
 
         if (!claimed) {
           this._stats.claimConflicts++;
-          this.emit('signal:claim-conflict', signal, this.definition.name);
+          this.emitEvent({
+            type: 'signal:claim_failed',
+            colony: colonyName,
+            timestamp: Date.now(),
+            signalId: signal.id,
+            signalType: signal.type,
+          });
+          this.emit('signal:claim-conflict', signal, colonyName);
           this.log('debug', `Claim conflict on ${signal.id} — another colony got it`);
           this.processingSignals.delete(signal.id);
           this._activeCount--;
@@ -235,23 +289,66 @@ export class ColonyRuntime implements IColonyRuntime {
         }
 
         this._stats.signalsClaimed++;
-        this.emit('signal:claimed', signal, this.definition.name);
+        this.emitEvent({
+          type: 'signal:claimed',
+          colony: colonyName,
+          timestamp: Date.now(),
+          signalId: signal.id,
+          signalType: signal.type,
+        });
+        this.emit('signal:claimed', signal, colonyName);
       }
 
-      // 3. Execute the action
+      // 4. Execute the action
+      this.emitEvent({
+        type: 'action:started',
+        colony: colonyName,
+        timestamp: Date.now(),
+        signalId: signal.id,
+        signalType: signal.type,
+        rule: rule.name,
+      });
+
       const ctx = this.createActionContext(signal);
       await this.executeWithRetry(rule, signal, ctx);
 
+      const actionDuration = Date.now() - startTime;
       this._stats.signalsProcessed++;
-      this.emit('signal:processed', signal, this.definition.name);
+      this.emitEvent({
+        type: 'action:completed',
+        colony: colonyName,
+        timestamp: Date.now(),
+        signalId: signal.id,
+        signalType: signal.type,
+        rule: rule.name,
+        duration: actionDuration,
+      });
+      this.emit('signal:processed', signal, colonyName);
 
-      // 4. Auto-withdraw if configured
+      // 5. Auto-withdraw if configured
       if (this.definition.config?.autoWithdraw) {
         await this.definition.environment.withdraw(signal.id);
+        this.emitEvent({
+          type: 'signal:withdrawn',
+          colony: colonyName,
+          timestamp: Date.now(),
+          signalId: signal.id,
+          signalType: signal.type,
+        });
       }
 
     } catch (err) {
       this._stats.errors++;
+      const actionDuration = Date.now() - startTime;
+      this.emitEvent({
+        type: 'action:failed',
+        colony: colonyName,
+        timestamp: Date.now(),
+        signalId: signal.id,
+        signalType: signal.type,
+        duration: actionDuration,
+        error: err instanceof Error ? err.message : String(err),
+      });
       this.emit('colony:error', err, signal);
       this.log('error', `Error processing signal ${signal.id}: ${err}`);
 
@@ -259,6 +356,13 @@ export class ColonyRuntime implements IColonyRuntime {
       if (this.definition.claimStrategy !== 'none') {
         try {
           await this.definition.environment.release(signal.id);
+          this.emitEvent({
+            type: 'claim:released',
+            colony: colonyName,
+            timestamp: Date.now(),
+            signalId: signal.id,
+            signalType: signal.type,
+          });
         } catch { /* best effort */ }
       }
     } finally {
@@ -350,6 +454,13 @@ export class ColonyRuntime implements IColonyRuntime {
           },
         });
         runtime._stats.signalsDeposited++;
+        runtime.emitEvent({
+          type: 'signal:deposited',
+          colony: colonyName,
+          timestamp: Date.now(),
+          signalId: signal.id,
+          signalType: signal.type,
+        });
         runtime.emit('signal:deposited', signal, colonyName);
         runtime.log('debug', `Deposited ${signal.type} (${signal.id})`);
         return signal;
@@ -357,6 +468,12 @@ export class ColonyRuntime implements IColonyRuntime {
 
       async withdraw(signalId) {
         await env.withdraw(signalId);
+        runtime.emitEvent({
+          type: 'signal:withdrawn',
+          colony: colonyName,
+          timestamp: Date.now(),
+          signalId,
+        });
         runtime.log('debug', `Withdrew signal ${signalId}`);
       },
 
@@ -373,6 +490,16 @@ export class ColonyRuntime implements IColonyRuntime {
   private async runDecay(): Promise<void> {
     try {
       const result = await this.definition.environment.decay();
+      this.emitEvent({
+        type: 'decay:sweep',
+        colony: this.definition.name,
+        timestamp: Date.now(),
+        metadata: {
+          decayed: result.decayed,
+          evaporated: result.evaporated,
+          claimsReleased: result.claimsReleased,
+        },
+      });
       if (result.evaporated > 0 || result.claimsReleased > 0) {
         this.log('debug',
           `Decay sweep: ${result.decayed} decayed, ${result.evaporated} evaporated, ${result.claimsReleased} claims released`
@@ -425,7 +552,17 @@ function sleep(ms: number): Promise<void> {
  */
 export function createRuntime(
   definition: ColonyDefinition,
-  decayPolicy?: Partial<DecayPolicy>
+  decayPolicyOrOptions?: Partial<DecayPolicy> | {
+    decayPolicy?: Partial<DecayPolicy>;
+    onEvent?: RuntimeEventCallback;
+    eventBus?: EventBus;
+  }
 ): ColonyRuntime {
-  return new ColonyRuntime(definition, decayPolicy);
+  // Support both legacy (just decay policy) and new options format
+  if (decayPolicyOrOptions && ('onEvent' in decayPolicyOrOptions || 'eventBus' in decayPolicyOrOptions || 'decayPolicy' in decayPolicyOrOptions)) {
+    return new ColonyRuntime(definition, decayPolicyOrOptions as any);
+  }
+  return new ColonyRuntime(definition, {
+    decayPolicy: decayPolicyOrOptions as Partial<DecayPolicy> | undefined,
+  });
 }
