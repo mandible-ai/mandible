@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mandible — dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --bg-card: #22223a;
+  --bg-card-hover: #2a2a48;
+  --border: #333355;
+  --text: #e0e0f0;
+  --text-dim: #8888aa;
+  --accent: #f0a030;
+  --accent-dim: #c08020;
+  --green: #40c060;
+  --red: #e05050;
+  --blue: #5090e0;
+  --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; overflow: hidden; height: 100vh; }
+
+/* Layout */
+.app { display: grid; grid-template-rows: 48px 1fr; grid-template-columns: 1fr 360px; height: 100vh; }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid var(--border); gap: 16px; }
+.main { display: flex; flex-direction: column; overflow: hidden; }
+.sidebar { border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+
+/* Topbar */
+.logo { font-family: var(--mono); font-weight: 700; font-size: 18px; color: var(--accent); letter-spacing: -0.5px; }
+.logo span { color: var(--text-dim); font-weight: 400; font-size: 13px; margin-left: 8px; }
+.tabs { display: flex; gap: 2px; margin-left: 24px; }
+.tab { padding: 6px 14px; border-radius: 6px 6px 0 0; cursor: pointer; color: var(--text-dim); font-size: 13px; border: 1px solid transparent; border-bottom: none; transition: all 0.15s; }
+.tab:hover { color: var(--text); background: var(--bg-card); }
+.tab.active { color: var(--accent); background: var(--bg-card); border-color: var(--border); }
+.connection { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.connection .dot { width: 8px; height: 8px; border-radius: 50%; }
+.connection .dot.connected { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.connection .dot.disconnected { background: var(--red); box-shadow: 0 0 6px var(--red); }
+
+/* Tab panels */
+.panel { display: none; flex: 1; overflow: hidden; }
+.panel.active { display: flex; flex-direction: column; }
+
+/* Colony cards (sidebar) */
+.sidebar-title { padding: 12px 16px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); }
+.colony-cards { flex: 1; overflow-y: auto; padding: 0 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.colony-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.colony-card .name { font-family: var(--mono); font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.colony-card .name .state { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 400; font-family: var(--sans); }
+.colony-card .name .state.running { background: rgba(64,192,96,0.2); color: var(--green); }
+.colony-card .name .state.stopped { background: rgba(224,80,80,0.2); color: var(--red); }
+.colony-card .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 8px; font-size: 12px; }
+.colony-card .stat { color: var(--text-dim); }
+.colony-card .stat b { color: var(--text); font-weight: 500; }
+.colony-card .bar { margin-top: 8px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.colony-card .bar .fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
+
+/* Event stream */
+.event-stream { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+.event-item { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; animation: fadeIn 0.3s ease; }
+.event-item:hover { background: var(--bg-card); }
+.event-item .ts { color: var(--text-dim); font-family: var(--mono); font-size: 11px; flex-shrink: 0; }
+.event-item .colony-tag { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius: 3px; flex-shrink: 0; }
+.event-item .etype { font-family: var(--mono); font-size: 11px; color: var(--text-dim); flex-shrink: 0; }
+.event-item .detail { color: var(--text-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.event-item .duration { color: var(--accent-dim); font-family: var(--mono); font-size: 11px; margin-left: auto; flex-shrink: 0; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Signals sidebar section */
+.signals-section { border-top: 1px solid var(--border); max-height: 40%; overflow: hidden; display: flex; flex-direction: column; }
+.signal-list { flex: 1; overflow-y: auto; padding: 0 12px 12px; }
+.signal-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+.signal-item:hover { background: var(--bg-card-hover); }
+.signal-item .stype { font-family: var(--mono); font-size: 11px; }
+.signal-item .conc-bar { flex: 1; height: 4px; background: var(--border); border-radius: 2px; min-width: 40px; max-width: 80px; }
+.signal-item .conc-bar .fill { height: 100%; border-radius: 2px; background: var(--accent); transition: width 1s linear; }
+.signal-item .age { color: var(--text-dim); font-size: 10px; }
+
+/* Signal graph */
+#graph-panel { position: relative; }
+#graph-svg { width: 100%; height: 100%; }
+.graph-node { cursor: pointer; }
+.graph-node circle { transition: r 0.3s; }
+.graph-node text { font-family: var(--mono); font-size: 10px; fill: var(--text); pointer-events: none; }
+.graph-link { stroke: var(--border); stroke-opacity: 0.6; }
+
+/* Environment inspector */
+.inspector { flex: 1; overflow: auto; padding: 12px; }
+.inspector table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.inspector th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; background: var(--bg); cursor: pointer; }
+.inspector th:hover { color: var(--text); }
+.inspector td { padding: 6px 8px; border-bottom: 1px solid rgba(51,51,85,0.3); font-family: var(--mono); font-size: 11px; }
+.inspector tr:hover td { background: var(--bg-card); }
+.inspector .conc-cell { display: flex; align-items: center; gap: 6px; }
+.inspector .conc-cell .bar { width: 40px; height: 4px; background: var(--border); border-radius: 2px; }
+.inspector .conc-cell .bar .fill { height: 100%; border-radius: 2px; background: var(--accent); }
+
+/* Deposit form */
+.deposit-form { padding: 12px; border-top: 1px solid var(--border); display: flex; gap: 8px; flex-wrap: wrap; }
+.deposit-form input, .deposit-form textarea { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 4px; font-family: var(--mono); font-size: 12px; }
+.deposit-form input { flex: 1; min-width: 100px; }
+.deposit-form textarea { width: 100%; height: 60px; resize: vertical; }
+.deposit-form button { background: var(--accent); color: var(--bg); border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 12px; }
+.deposit-form button:hover { background: var(--accent-dim); }
+
+/* Signal detail overlay */
+.overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 100; justify-content: center; align-items: center; }
+.overlay.active { display: flex; }
+.overlay-content { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; }
+.overlay-content h3 { font-family: var(--mono); margin-bottom: 12px; color: var(--accent); }
+.overlay-content pre { background: var(--bg); padding: 12px; border-radius: 6px; font-size: 12px; overflow-x: auto; }
+.overlay-content .close { float: right; cursor: pointer; color: var(--text-dim); font-size: 18px; }
+.overlay-content .close:hover { color: var(--text); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #444466; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="logo">mandible<span>dashboard</span></div>
+    <div class="tabs">
+      <div class="tab active" data-tab="flow">Signal Flow</div>
+      <div class="tab" data-tab="graph">Signal Graph</div>
+      <div class="tab" data-tab="inspector">Inspector</div>
+    </div>
+    <div class="connection">
+      <div class="dot disconnected" id="conn-dot"></div>
+      <span id="conn-text">connecting...</span>
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- Signal Flow -->
+    <div class="panel active" id="panel-flow">
+      <div class="event-stream" id="event-stream"></div>
+    </div>
+
+    <!-- Signal Graph -->
+    <div class="panel" id="panel-graph">
+      <svg id="graph-svg"></svg>
+    </div>
+
+    <!-- Environment Inspector -->
+    <div class="panel" id="panel-inspector">
+      <div class="inspector" id="inspector-table-wrap"></div>
+      <div class="deposit-form">
+        <input type="text" id="deposit-type" placeholder="signal type (e.g. task:ready)">
+        <textarea id="deposit-payload" placeholder='{"key": "value"}'></textarea>
+        <button id="deposit-btn">Deposit Signal</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="sidebar-title">Colonies</div>
+    <div class="colony-cards" id="colony-cards"></div>
+    <div class="signals-section">
+      <div class="sidebar-title">Active Signals</div>
+      <div class="signal-list" id="signal-list"></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="signal-overlay">
+  <div class="overlay-content">
+    <span class="close" id="overlay-close">&times;</span>
+    <h3 id="overlay-title"></h3>
+    <pre id="overlay-body"></pre>
+  </div>
+</div>
+
+<script>
+(function() {
+  // ── State ──────────────────────────────────────────────
+  const state = {
+    events: [],
+    signals: [],
+    colonies: [],
+    ws: null,
+    connected: false,
+  };
+
+  const MAX_EVENTS = 1000;
+
+  // Colony colors — deterministic from name
+  const COLONY_COLORS = {};
+  const PALETTE = ['#f0a030','#5090e0','#40c060','#e05050','#b060e0','#e07050','#50c0c0','#c0c040'];
+  function colonyColor(name) {
+    if (!COLONY_COLORS[name]) {
+      let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+      COLONY_COLORS[name] = PALETTE[h % PALETTE.length];
+    }
+    return COLONY_COLORS[name];
+  }
+
+  // Signal type color — deterministic
+  function typeColor(type) {
+    let h = 0; for (let i = 0; i < type.length; i++) h = (h * 37 + type.charCodeAt(i)) >>> 0;
+    return PALETTE[h % PALETTE.length];
+  }
+
+  // ── WebSocket ──────────────────────────────────────────
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}`);
+    state.ws = ws;
+
+    ws.onopen = () => {
+      state.connected = true;
+      updateConnectionUI();
+    };
+
+    ws.onclose = () => {
+      state.connected = false;
+      updateConnectionUI();
+      setTimeout(connect, 2000);
+    };
+
+    ws.onerror = () => ws.close();
+
+    ws.onmessage = (msg) => {
+      const data = JSON.parse(msg.data);
+      if (data.type === 'init') {
+        for (const ev of data.events) addEvent(ev);
+        renderEvents();
+      } else if (data.type === 'event') {
+        addEvent(data.data);
+        renderEventItem(data.data);
+      } else if (data.type === 'snapshot') {
+        state.signals = data.signals;
+        renderSignals();
+        renderGraph();
+      }
+    };
+  }
+
+  function addEvent(ev) {
+    state.events.push(ev);
+    if (state.events.length > MAX_EVENTS) state.events.shift();
+  }
+
+  function updateConnectionUI() {
+    const dot = document.getElementById('conn-dot');
+    const text = document.getElementById('conn-text');
+    if (state.connected) {
+      dot.className = 'dot connected';
+      text.textContent = 'connected';
+    } else {
+      dot.className = 'dot disconnected';
+      text.textContent = 'reconnecting...';
+    }
+  }
+
+  // ── Tabs ───────────────────────────────────────────────
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+      if (tab.dataset.tab === 'graph') renderGraph();
+      if (tab.dataset.tab === 'inspector') renderInspector();
+    });
+  });
+
+  // ── Event Stream ───────────────────────────────────────
+  function renderEvents() {
+    const el = document.getElementById('event-stream');
+    el.innerHTML = '';
+    for (const ev of state.events.slice(-200)) {
+      el.appendChild(createEventNode(ev));
+    }
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function renderEventItem(ev) {
+    const el = document.getElementById('event-stream');
+    el.appendChild(createEventNode(ev));
+    // Auto-scroll if near bottom
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 100) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }
+
+  function createEventNode(ev) {
+    const div = document.createElement('div');
+    div.className = 'event-item';
+
+    const ts = new Date(ev.timestamp).toISOString().slice(11, 23);
+    const color = colonyColor(ev.colony);
+
+    let detail = '';
+    if (ev.signalType) detail = ev.signalType;
+    if (ev.signalId) detail += ` (${ev.signalId.slice(0, 12)}...)`;
+    if (ev.rule) detail += ` [${ev.rule}]`;
+    if (ev.error) detail = ev.error;
+    if (ev.metadata) {
+      const m = ev.metadata;
+      if (m.decayed !== undefined) detail = `decayed:${m.decayed} evaporated:${m.evaporated} claims:${m.claimsReleased}`;
+    }
+
+    div.innerHTML = `
+      <span class="ts">${ts}</span>
+      <span class="colony-tag" style="background:${color}22;color:${color};border:1px solid ${color}44">${ev.colony}</span>
+      <span class="etype">${formatEventType(ev.type)}</span>
+      <span class="detail">${detail}</span>
+      ${ev.duration ? `<span class="duration">${ev.duration}ms</span>` : ''}
+    `;
+    return div;
+  }
+
+  function formatEventType(type) {
+    return type.replace('colony:', '').replace('signal:', '').replace('action:', '').replace('decay:', '').replace('claim:', '').replace('environment:', '');
+  }
+
+  // ── Colony Cards ───────────────────────────────────────
+  function renderColonies(colonies) {
+    const el = document.getElementById('colony-cards');
+    el.innerHTML = '';
+    for (const c of colonies) {
+      const color = colonyColor(c.name);
+      const card = document.createElement('div');
+      card.className = 'colony-card';
+      card.style.borderLeftColor = color;
+      card.style.borderLeftWidth = '3px';
+
+      const stateClass = c.state === 'running' ? 'running' : 'stopped';
+      const concPct = c.stats ? Math.round((c.activeCount / Math.max(1, 1)) * 100) : 0;
+
+      card.innerHTML = `
+        <div class="name">
+          ${c.name}
+          <span class="state ${stateClass}">${c.state}</span>
+        </div>
+        <div class="stats">
+          <div class="stat">processed <b>${c.stats?.signalsProcessed ?? 0}</b></div>
+          <div class="stat">deposited <b>${c.stats?.signalsDeposited ?? 0}</b></div>
+          <div class="stat">errors <b>${c.stats?.errors ?? 0}</b></div>
+          <div class="stat">avg <b>${Math.round(c.stats?.avgProcessingMs ?? 0)}ms</b></div>
+        </div>
+        <div class="bar"><div class="fill" style="width:${concPct}%;background:${color}"></div></div>
+      `;
+      el.appendChild(card);
+    }
+  }
+
+  // ── Signals Sidebar ────────────────────────────────────
+  function renderSignals() {
+    const el = document.getElementById('signal-list');
+    el.innerHTML = '';
+    const sorted = [...state.signals].sort((a, b) => b.meta.concentration - a.meta.concentration);
+    for (const s of sorted.slice(0, 50)) {
+      const item = document.createElement('div');
+      item.className = 'signal-item';
+      const color = typeColor(s.type);
+      const concPct = Math.round(s.meta.concentration * 100);
+      const age = formatAge(s.meta.deposited_at);
+
+      item.innerHTML = `
+        <span class="stype" style="color:${color}">${s.type}</span>
+        <div class="conc-bar"><div class="fill" style="width:${concPct}%;background:${color}"></div></div>
+        <span class="age">${age}</span>
+      `;
+      item.addEventListener('click', () => showSignalDetail(s));
+      el.appendChild(item);
+    }
+  }
+
+  // ── Signal Graph (d3-force) ────────────────────────────
+  let simulation = null;
+  function renderGraph() {
+    const svg = d3.select('#graph-svg');
+    const panel = document.getElementById('panel-graph');
+    if (!panel.classList.contains('active')) return;
+
+    svg.selectAll('*').remove();
+
+    const width = panel.clientWidth;
+    const height = panel.clientHeight;
+    svg.attr('width', width).attr('height', height);
+
+    if (!state.signals.length) {
+      svg.append('text').attr('x', width/2).attr('y', height/2)
+        .attr('text-anchor', 'middle').attr('fill', '#8888aa').attr('font-size', 14)
+        .text('No signals — deposit some to see the graph');
+      return;
+    }
+
+    const nodes = state.signals.map(s => ({
+      id: s.id,
+      type: s.type,
+      concentration: s.meta.concentration,
+      deposited_by: s.meta.deposited_by,
+      signal: s,
+    }));
+
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    const links = [];
+    for (const s of state.signals) {
+      if (s.meta.caused_by) {
+        for (const parentId of s.meta.caused_by) {
+          if (nodeMap.has(parentId)) {
+            links.push({ source: parentId, target: s.id });
+          }
+        }
+      }
+    }
+
+    if (simulation) simulation.stop();
+    simulation = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink(links).id(d => d.id).distance(80))
+      .force('charge', d3.forceManyBody().strength(-120))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('collision', d3.forceCollide().radius(d => 8 + d.concentration * 16));
+
+    const link = svg.append('g')
+      .selectAll('line')
+      .data(links)
+      .enter().append('line')
+      .attr('class', 'graph-link')
+      .attr('stroke-width', 1.5)
+      .attr('marker-end', 'url(#arrow)');
+
+    svg.append('defs').append('marker')
+      .attr('id', 'arrow').attr('viewBox', '0 -5 10 10')
+      .attr('refX', 20).attr('refY', 0)
+      .attr('markerWidth', 6).attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path').attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', '#333355');
+
+    const node = svg.append('g')
+      .selectAll('g')
+      .data(nodes)
+      .enter().append('g')
+      .attr('class', 'graph-node')
+      .call(d3.drag()
+        .on('start', (event, d) => { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+        .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+        .on('end', (event, d) => { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+      );
+
+    node.append('circle')
+      .attr('r', d => 6 + d.concentration * 12)
+      .attr('fill', d => typeColor(d.type))
+      .attr('fill-opacity', d => 0.3 + d.concentration * 0.7)
+      .attr('stroke', d => typeColor(d.type))
+      .attr('stroke-width', 1.5);
+
+    node.append('text')
+      .attr('dx', d => 10 + d.concentration * 12)
+      .attr('dy', 4)
+      .text(d => d.type);
+
+    node.on('click', (event, d) => showSignalDetail(d.signal));
+
+    simulation.on('tick', () => {
+      link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+      node.attr('transform', d => `translate(${d.x},${d.y})`);
+    });
+  }
+
+  // ── Environment Inspector ──────────────────────────────
+  let sortKey = 'type';
+  let sortDir = 1;
+
+  function renderInspector() {
+    const wrap = document.getElementById('inspector-table-wrap');
+    const sorted = [...state.signals].sort((a, b) => {
+      let va, vb;
+      switch (sortKey) {
+        case 'type': va = a.type; vb = b.type; break;
+        case 'deposited_by': va = a.meta.deposited_by; vb = b.meta.deposited_by; break;
+        case 'concentration': va = a.meta.concentration; vb = b.meta.concentration; break;
+        case 'age': va = a.meta.deposited_at; vb = b.meta.deposited_at; break;
+        case 'claimed_by': va = a.meta.claimed_by ?? ''; vb = b.meta.claimed_by ?? ''; break;
+        default: va = a.type; vb = b.type;
+      }
+      if (typeof va === 'string') return va.localeCompare(vb) * sortDir;
+      return ((va ?? 0) - (vb ?? 0)) * sortDir;
+    });
+
+    wrap.innerHTML = `<table>
+      <thead><tr>
+        <th data-sort="type">type</th>
+        <th data-sort="deposited_by">deposited_by</th>
+        <th data-sort="concentration">concentration</th>
+        <th data-sort="age">age</th>
+        <th data-sort="claimed_by">claimed_by</th>
+        <th>tags</th>
+      </tr></thead>
+      <tbody>${sorted.map(s => {
+        const concPct = Math.round(s.meta.concentration * 100);
+        const color = typeColor(s.type);
+        return `<tr data-id="${s.id}" style="cursor:pointer">
+          <td style="color:${color}">${s.type}</td>
+          <td>${s.meta.deposited_by}</td>
+          <td><div class="conc-cell"><div class="bar"><div class="fill" style="width:${concPct}%;background:${color}"></div></div>${concPct}%</div></td>
+          <td>${formatAge(s.meta.deposited_at)}</td>
+          <td>${s.meta.claimed_by ?? '-'}</td>
+          <td>${(s.meta.tags ?? []).join(', ')}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+
+    // Sort headers
+    wrap.querySelectorAll('th[data-sort]').forEach(th => {
+      th.addEventListener('click', () => {
+        if (sortKey === th.dataset.sort) sortDir *= -1;
+        else { sortKey = th.dataset.sort; sortDir = 1; }
+        renderInspector();
+      });
+    });
+
+    // Row click
+    wrap.querySelectorAll('tr[data-id]').forEach(tr => {
+      tr.addEventListener('click', () => {
+        const s = state.signals.find(s => s.id === tr.dataset.id);
+        if (s) showSignalDetail(s);
+      });
+    });
+  }
+
+  // ── Signal Detail Overlay ──────────────────────────────
+  function showSignalDetail(signal) {
+    document.getElementById('signal-overlay').classList.add('active');
+    document.getElementById('overlay-title').textContent = `${signal.type} — ${signal.id}`;
+    document.getElementById('overlay-body').textContent = JSON.stringify(signal, null, 2);
+  }
+
+  document.getElementById('overlay-close').addEventListener('click', () => {
+    document.getElementById('signal-overlay').classList.remove('active');
+  });
+  document.getElementById('signal-overlay').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) e.currentTarget.classList.remove('active');
+  });
+
+  // ── Deposit Form ───────────────────────────────────────
+  document.getElementById('deposit-btn').addEventListener('click', async () => {
+    const type = document.getElementById('deposit-type').value.trim();
+    if (!type) return;
+
+    let payload = {};
+    const raw = document.getElementById('deposit-payload').value.trim();
+    if (raw) {
+      try { payload = JSON.parse(raw); } catch { alert('Invalid JSON payload'); return; }
+    }
+
+    try {
+      await fetch('/api/signals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, payload }),
+      });
+      document.getElementById('deposit-type').value = '';
+      document.getElementById('deposit-payload').value = '';
+    } catch (err) {
+      alert('Failed to deposit signal: ' + err.message);
+    }
+  });
+
+  // ── Helpers ────────────────────────────────────────────
+  function formatAge(depositedAt) {
+    const s = Math.floor((Date.now() - depositedAt) / 1000);
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm';
+    if (s < 86400) return Math.floor(s / 3600) + 'h';
+    return Math.floor(s / 86400) + 'd';
+  }
+
+  // ── Polling for colony status ──────────────────────────
+  async function pollColonies() {
+    try {
+      const res = await fetch('/api/colonies');
+      const data = await res.json();
+      state.colonies = data.colonies;
+      renderColonies(data.colonies);
+    } catch { /* ignore */ }
+  }
+
+  async function pollState() {
+    try {
+      const res = await fetch('/api/state');
+      const data = await res.json();
+      state.signals = data.signals;
+      renderSignals();
+      if (document.querySelector('.tab[data-tab="graph"]').classList.contains('active')) renderGraph();
+      if (document.querySelector('.tab[data-tab="inspector"]').classList.contains('active')) renderInspector();
+    } catch { /* ignore */ }
+  }
+
+  // ── Init ───────────────────────────────────────────────
+  connect();
+  pollColonies();
+  pollState();
+  setInterval(pollColonies, 3000);
+  setInterval(pollState, 5000);
+
+  // Handle resize for graph
+  window.addEventListener('resize', () => {
+    if (document.querySelector('.tab[data-tab="graph"]').classList.contains('active')) renderGraph();
+  });
+})();
+</script>
+</body>
+</html>
