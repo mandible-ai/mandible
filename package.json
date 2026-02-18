@@ -1,21 +1,66 @@
 {
-  "name": "@stigmergy/framework",
+  "name": "mandible",
   "version": "0.1.0",
-  "description": "Universal stigmergy framework for agent coordination through environmental signals",
+  "description": "Universal stigmergy framework for autonomous agent coordination — like ant colonies using pheromone trails",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./environments/filesystem": {
+      "types": "./dist/environments/filesystem/index.d.ts",
+      "import": "./dist/environments/filesystem/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "import": "./dist/providers/index.js"
+    }
+  },
+  "bin": {
+    "mandible": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "stigmergy",
+    "agents",
+    "multi-agent",
+    "coordination",
+    "framework",
+    "autonomous",
+    "ai",
+    "llm",
+    "colony",
+    "pheromone"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mandible-dev/mandible"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch examples/code-pipeline/index.ts",
     "demo": "tsx examples/code-pipeline/index.ts",
-    "test": "vitest"
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@noble/ed25519": "^3.0.0",
     "chokidar": "^4.0.0",
     "eventemitter3": "^5.0.0",
-    "nanoid": "^5.0.0"
+    "nanoid": "^5.0.0",
+    "ws": "^8.19.0"
   },
   "peerDependencies": {
     "@ai-sdk/anthropic": ">=0.1.0",
@@ -55,6 +100,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^2.1.9",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",

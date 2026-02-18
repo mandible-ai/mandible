@@ -1,5 +1,5 @@
 // ============================================================
-// @stigmergy/framework — Public API
+// mandible — Public API
 // ============================================================
 
 // Core types
@@ -46,6 +46,13 @@ export { colony } from './dsl/builder.js';
 
 // Runtime
 export { ColonyRuntime, createRuntime } from './core/runtime.js';
+
+// Event system
+export { EventBus } from './core/events.js';
+export type { RuntimeEventType, RuntimeEventData, RuntimeEventCallback } from './core/events.js';
+
+// Validation
+export { SignalValidationError, validateSignalInput } from './core/validation.js';
 
 // Environment adapters
 export { FilesystemEnvironment } from './environments/filesystem/index.js';
