@@ -6,7 +6,7 @@ Instead of agents talking to each other through message passing, agents coordina
 
 ## Why stigmergy over message passing?
 
-Most multi-agent frameworks (CrewAI, AutoGen, LangGraph) coordinate agents through direct messaging. This reimplements distributed systems problems — service discovery, message routing, consensus, backpressure - but for LLMs.
+Most multi-agent frameworks (CrewAI, AutoGen, LangGraph) coordinate agents through direct messaging. This reimplements distributed systems problems: service discovery, message routing, consensus, backpressure - but for LLMs.
 
 Stigmergy sidesteps all of that. The environment carries the state. Agents are stateless reactive workers. You never need to answer "who should I tell about this?" - you just modify the environment, and whoever cares will notice.
 
