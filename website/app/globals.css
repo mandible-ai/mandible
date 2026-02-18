@@ -1,0 +1,84 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Mandible -- warm polished dark */
+  --background: #101014;
+  --foreground: #ededef;
+  --card: #18181c;
+  --card-foreground: #ededef;
+  --popover: #18181c;
+  --popover-foreground: #ededef;
+  --primary: #34d399;
+  --primary-foreground: #101014;
+  --secondary: #1c1c22;
+  --secondary-foreground: #ededef;
+  --muted: #1c1c22;
+  --muted-foreground: #71717a;
+  --accent: #34d399;
+  --accent-foreground: #101014;
+  --destructive: #f87171;
+  --destructive-foreground: #101014;
+  --border: #27272e;
+  --input: #27272e;
+  --ring: #34d399;
+  --chart-1: #34d399;
+  --chart-2: #60a5fa;
+  --chart-3: #f87171;
+  --chart-4: #fbbf24;
+  --chart-5: #a78bfa;
+  --radius: 0.75rem;
+  --surface: #18181c;
+  --accent-glow: rgba(52, 211, 153, 0.06);
+}
+
+@theme inline {
+  --font-sans: var(--font-inter), -apple-system, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), 'JetBrains Mono', monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-surface: var(--surface);
+  --color-accent-glow: var(--accent-glow);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
