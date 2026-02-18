@@ -45,3 +45,20 @@ export { DoltEnvironment } from './environments/dolt/index.js';
 
 // Default policies
 export { DEFAULT_DECAY_POLICY } from './core/types.js';
+
+// Action providers
+export { withAgent } from './providers/agent.js';
+export { withStructuredOutput } from './providers/structured-output.js';
+export { withBash } from './providers/bash.js';
+export { assembleContext, withContext } from './providers/context.js';
+
+export type {
+  ActionHandler,
+  AgentProviderConfig,
+  StructuredOutputConfig,
+  BashProviderConfig,
+  LLMCallFunction,
+  SignalDeposit,
+  OutputMapping,
+  ContextAssemblyConfig,
+} from './providers/types.js';

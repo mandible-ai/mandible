@@ -16,6 +16,26 @@
     "nanoid": "^5.0.0",
     "eventemitter3": "^5.0.0"
   },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.30.0",
+    "@anthropic-ai/claude-code": ">=0.1.0",
+    "openai": ">=4.0.0",
+    "ai": ">=3.0.0",
+    "@ai-sdk/anthropic": ">=0.1.0",
+    "@ai-sdk/openai": ">=0.1.0",
+    "@ai-sdk/google": ">=0.1.0",
+    "zod": ">=3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": { "optional": true },
+    "@anthropic-ai/claude-code": { "optional": true },
+    "openai": { "optional": true },
+    "ai": { "optional": true },
+    "@ai-sdk/anthropic": { "optional": true },
+    "@ai-sdk/openai": { "optional": true },
+    "@ai-sdk/google": { "optional": true },
+    "zod": { "optional": true }
+  },
   "devDependencies": {
     "typescript": "^5.5.0",
     "tsx": "^4.16.0",
