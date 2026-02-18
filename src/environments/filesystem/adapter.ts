@@ -27,6 +27,7 @@ import type {
 import {
   createSignal, matchesQuery, decayConcentration, isExpired, isClaimExpired
 } from '../../core/signal.js';
+import { validateSignalInput } from '../../core/validation.js';
 
 export interface FilesystemEnvConfig {
   /** Root directory for this environment */
@@ -80,6 +81,7 @@ export class FilesystemEnvironment implements Environment {
     input: Omit<Signal, 'id' | 'meta'> & { meta?: Partial<SignalMeta> }
   ): Promise<Signal> {
     await this.ensureInit();
+    validateSignalInput(input);
 
     const signal = createSignal(input.type, input.payload, {
       deposited_by: input.meta?.deposited_by,
@@ -194,43 +196,51 @@ export class FilesystemEnvironment implements Environment {
   }
 
   watch(query: SignalQuery, callback: (signal: Signal) => void): Subscription {
-    // Use Node's native fs.watch for push-based notification
     const seen = new Set<string>();
     let active = true;
+    let watcher: ReturnType<typeof watch> | undefined;
 
-    // Initial scan for existing signals
-    this.observe(query).then(signals => {
+    // Ensure directory exists then set up watch
+    const setup = async () => {
+      await this.ensureInit();
+
+      // Initial scan for existing signals
+      const signals = await this.observe(query);
       for (const signal of signals) {
         if (!active) return;
         seen.add(signal.id);
         callback(signal);
       }
-    });
 
-    // Watch for new signal files
-    const watcher = watch(this.signalsDir, async (eventType, filename) => {
-      if (!active || !filename?.endsWith('.json')) return;
+      if (!active) return;
 
-      const signalId = filename.replace('.json', '');
-      if (seen.has(signalId)) return;
+      // Watch for new signal files
+      watcher = watch(this.signalsDir, async (eventType, filename) => {
+        if (!active || !filename?.endsWith('.json')) return;
 
-      try {
-        const raw = await readFile(join(this.signalsDir, filename), 'utf-8');
-        const signal: Signal = JSON.parse(raw);
+        const signalId = filename.replace('.json', '');
+        if (seen.has(signalId)) return;
 
-        if (matchesQuery(signal, query)) {
-          seen.add(signal.id);
-          callback(signal);
+        try {
+          const raw = await readFile(join(this.signalsDir, filename), 'utf-8');
+          const signal: Signal = JSON.parse(raw);
+
+          if (matchesQuery(signal, query)) {
+            seen.add(signal.id);
+            callback(signal);
+          }
+        } catch {
+          // File may have been withdrawn already — that's fine
         }
-      } catch {
-        // File may have been withdrawn already — that's fine
-      }
-    });
+      });
+    };
+
+    setup();
 
     return {
       unsubscribe() {
         active = false;
-        watcher.close();
+        watcher?.close();
       }
     };
   }
@@ -274,6 +284,9 @@ export class FilesystemEnvironment implements Environment {
       // Check claim lease expiration
       if (isClaimExpired(signal, now)) {
         await this.release(signal.id);
+        signal.meta.claimed_by = undefined;
+        signal.meta.claimed_at = undefined;
+        signal.meta.claim_lease = undefined;
         result.claimsReleased++;
         changed = true;
       }
