@@ -21,6 +21,14 @@ export type {
   RuntimeStats,
   RuntimeEvent,
   DecayPolicy,
+  // Provenance & Trust types
+  TrustLevel,
+  Attestation,
+  ColonyIdentity,
+  TrustPolicy,
+  SigningConfig,
+  VerificationResult,
+  BridgeConfig,
 } from './core/types.js';
 
 // Signal utilities
@@ -45,6 +53,27 @@ export { DoltEnvironment } from './environments/dolt/index.js';
 
 // Default policies
 export { DEFAULT_DECAY_POLICY } from './core/types.js';
+
+// Attestation & signing utilities
+export {
+  generateIdentity,
+  signSignal,
+  createSigner,
+  verifySignature,
+  verifyAttestationChain,
+  verifySignal,
+  createAttestation,
+  prepareForBridge,
+  canonicalHash,
+  attestationHash,
+} from './core/attestation.js';
+
+// Patterns — reusable colony patterns
+export { createBridge } from './patterns/bridge.js';
+export type { SignalBridge, BridgeStats } from './patterns/bridge.js';
+
+export { createSentinel } from './patterns/sentinel.js';
+export type { Sentinel, SentinelConfig, SentinelEvaluation, SentinelStats } from './patterns/sentinel.js';
 
 // Action providers
 export { withAgent } from './providers/agent.js';

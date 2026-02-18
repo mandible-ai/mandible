@@ -62,6 +62,45 @@ export interface SignalMeta {
 
   /** Arbitrary tags for filtering */
   tags?: string[];
+
+  // ── Provenance & Trust ──────────────────────────────
+
+  /**
+   * Ed25519 signature of the canonical signal content.
+   * Signs: hash(type + JSON(payload) + JSON(caused_by))
+   * Proves the depositing colony actually produced this signal.
+   */
+  signature?: string;
+
+  /**
+   * Public key (hex-encoded) of the colony that signed this signal.
+   * Used to look up the colony identity for verification.
+   */
+  signer?: string;
+
+  /**
+   * Attestation chain for bridged signals.
+   * Each bridge that transfers a signal appends its own attestation.
+   * Verification walks the chain from origin to current environment.
+   */
+  attestations?: Attestation[];
+
+  /**
+   * Trust level assigned by the receiving environment's trust policy.
+   * Set during deposit validation. Colonies can filter by trust level.
+   *   'verified'   — signature valid, attestation chain checks out
+   *   'attested'   — bridge attestation present but colony sig missing
+   *   'unverified' — no provenance metadata (local signals, legacy)
+   *   'rejected'   — failed verification (quarantined, not evicted)
+   */
+  trustLevel?: TrustLevel;
+
+  /**
+   * The environment where this signal originated.
+   * Set automatically by bridges when transferring signals.
+   * Undefined for signals deposited locally.
+   */
+  sourceEnvironment?: string;
 }
 
 // ----------------------------------------------------------
@@ -322,3 +361,193 @@ export const DEFAULT_DECAY_POLICY: DecayPolicy = {
   releaseExpiredClaims: true,
   interval: 5_000,     // sweep every 5 seconds
 };
+
+// ----------------------------------------------------------
+// Provenance & Trust — colony signing and bridge attestation
+// ----------------------------------------------------------
+// Phase 1: Metadata only (no enforcement). Colonies sign signals,
+// bridges attest transfers. Environment trust policies come later.
+// ----------------------------------------------------------
+
+/**
+ * Trust levels assigned to signals based on provenance verification.
+ *   'verified'   — colony signature valid, full attestation chain checks out
+ *   'attested'   — bridge attestation present but colony signature missing
+ *   'unverified' — no provenance metadata (local signals, legacy systems)
+ *   'rejected'   — failed verification (quarantined, not evicted)
+ */
+export type TrustLevel = 'verified' | 'attested' | 'unverified' | 'rejected';
+
+/**
+ * A single attestation in the chain of custody for a bridged signal.
+ * Each bridge that transfers a signal appends its own attestation.
+ * Verification walks the chain from origin → current environment.
+ */
+export interface Attestation {
+  /** Identity of the bridge or environment that attests this transfer */
+  attester: string;
+
+  /** Public key (hex-encoded) of the attesting entity */
+  attesterKey: string;
+
+  /** Environment the signal was transferred FROM */
+  sourceEnvironment: string;
+
+  /** Environment the signal was transferred TO */
+  targetEnvironment: string;
+
+  /** When this attestation was created (epoch ms) */
+  timestamp: number;
+
+  /**
+   * Ed25519 signature over the attestation content.
+   * Signs: hash(signalId + sourceEnvironment + targetEnvironment + timestamp + previousSignature?)
+   * This creates a chain — each attestation signs over the previous one.
+   */
+  signature: string;
+
+  /** Optional human-readable note about the transfer */
+  note?: string;
+}
+
+/**
+ * Colony identity — the cryptographic identity of a colony.
+ * Generated once when a colony is first created, persisted across restarts.
+ * The private key stays with the colony; the public key is shared.
+ */
+export interface ColonyIdentity {
+  /** Colony name (must match ColonyDefinition.name) */
+  name: string;
+
+  /** Ed25519 public key, hex-encoded */
+  publicKey: string;
+
+  /** Ed25519 private key, hex-encoded. NEVER share or log this. */
+  privateKey: string;
+
+  /** Which environment this colony is registered in */
+  environment: string;
+
+  /** When the identity was created */
+  createdAt: number;
+
+  /** Optional metadata (version, capabilities, etc.) */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Trust policy for an environment — defines how signals are evaluated.
+ * Phase 2 feature: environments will enforce these policies during deposit.
+ * For now, policies are advisory and used by Sentinel colonies.
+ */
+export interface TrustPolicy {
+  /** Policy name for logging/debugging */
+  name: string;
+
+  /** Default trust level for signals with no provenance metadata */
+  defaultTrust: TrustLevel;
+
+  /** Whether to accept signals below a certain trust level */
+  minimumTrust: TrustLevel;
+
+  /** Explicitly trusted colony public keys (always 'verified' if sig checks out) */
+  trustedColonies: string[];
+
+  /** Explicitly trusted bridge/attester public keys */
+  trustedBridges: string[];
+
+  /**
+   * Environments whose signals are accepted via bridge.
+   * Empty array = accept from any environment.
+   * Undefined = accept from any environment.
+   */
+  allowedSourceEnvironments?: string[];
+
+  /**
+   * Environments whose signals are rejected regardless of attestation.
+   */
+  blockedSourceEnvironments?: string[];
+
+  /** Whether to quarantine rejected signals (keep but mark) or drop them entirely */
+  quarantineRejected: boolean;
+
+  /**
+   * Maximum age of the oldest attestation in the chain (ms).
+   * Prevents replay attacks with ancient attestation chains.
+   */
+  maxAttestationAge?: number;
+
+  /**
+   * Maximum number of hops (attestations) allowed in the chain.
+   * Prevents signals from traveling through too many intermediaries.
+   */
+  maxAttestationDepth?: number;
+}
+
+/**
+ * Configuration for signal signing within a colony.
+ * Passed to colony runtime to enable automatic signing.
+ */
+export interface SigningConfig {
+  /** Colony identity with private key for signing */
+  identity: ColonyIdentity;
+
+  /** Whether to sign all deposited signals (default: true) */
+  signAll?: boolean;
+
+  /** Signal types to exclude from signing (e.g., debug signals) */
+  excludeTypes?: string[];
+}
+
+/**
+ * Result of verifying a signal's provenance.
+ */
+export interface VerificationResult {
+  /** The trust level determined by verification */
+  trustLevel: TrustLevel;
+
+  /** Whether the colony signature is valid (if present) */
+  signatureValid: boolean | null; // null if no signature
+
+  /** Whether the attestation chain is valid (if present) */
+  attestationChainValid: boolean | null; // null if no attestations
+
+  /** Human-readable reason for the trust level */
+  reason: string;
+
+  /** Individual attestation verification results */
+  attestationResults?: Array<{
+    attester: string;
+    valid: boolean;
+    reason: string;
+  }>;
+}
+
+/**
+ * Bridge configuration for connecting two environments.
+ */
+export interface BridgeConfig {
+  /** Human-readable bridge name */
+  name: string;
+
+  /** Bridge identity for signing attestations */
+  identity: ColonyIdentity;
+
+  /** Source environment to mirror signals FROM */
+  source: Environment;
+
+  /** Target environment to mirror signals TO */
+  target: Environment;
+
+  /** Which signal types to bridge (glob patterns) */
+  signalTypes: string[];
+
+  /** Whether to bridge in both directions */
+  bidirectional?: boolean;
+
+  /** Transform signals during bridging (e.g., remap types, filter fields) */
+  transform?: (signal: Signal) => Signal | null;
+
+  /** How often to poll source for new signals (ms). Only if source doesn't support watch. */
+  pollInterval?: number;
+}
