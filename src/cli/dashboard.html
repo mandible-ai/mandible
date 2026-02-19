@@ -60,6 +60,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
 .colony-card .bar { margin-top: 8px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
 .colony-card .bar .fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
 
+/* Event stream filter */
+.filter-bar { padding: 8px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
+.filter-bar input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 4px; font-family: var(--mono); font-size: 12px; }
+.filter-bar input::placeholder { color: var(--text-dim); }
+.filter-bar .count { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+
 /* Event stream */
 .event-stream { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 2px; }
 .event-item { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; animation: fadeIn 0.3s ease; }
@@ -80,6 +86,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
 .signal-item .conc-bar { flex: 1; height: 4px; background: var(--border); border-radius: 2px; min-width: 40px; max-width: 80px; }
 .signal-item .conc-bar .fill { height: 100%; border-radius: 2px; background: var(--accent); transition: width 1s linear; }
 .signal-item .age { color: var(--text-dim); font-size: 10px; }
+.signal-item .payload-preview { color: var(--text-dim); font-size: 10px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
+.signal-item .signal-info { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
 
 /* Signal graph */
 #graph-panel { position: relative; }
@@ -142,6 +150,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
   <div class="main">
     <!-- Signal Flow -->
     <div class="panel active" id="panel-flow">
+      <div class="filter-bar">
+        <input type="text" id="event-filter" placeholder="Filter events (colony, type, signal...)">
+        <span class="count" id="event-count"></span>
+      </div>
       <div class="event-stream" id="event-stream"></div>
     </div>
 
@@ -191,6 +203,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
   };
 
   const MAX_EVENTS = 1000;
+  let eventFilter = '';
 
   // Colony colors — deterministic from name
   const COLONY_COLORS = {};
@@ -239,7 +252,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
       } else if (data.type === 'snapshot') {
         state.signals = data.signals;
         renderSignals();
-        renderGraph();
+        if (document.querySelector('.tab[data-tab="graph"]').classList.contains('active')) renderGraph();
+        if (document.querySelector('.tab[data-tab="inspector"]').classList.contains('active')) renderInspector();
       }
     };
   }
@@ -274,23 +288,51 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
   });
 
   // ── Event Stream ───────────────────────────────────────
+  function matchesFilter(ev) {
+    if (!eventFilter) return true;
+    const f = eventFilter.toLowerCase();
+    const searchable = [ev.colony, ev.type, ev.signalType, ev.signalId, ev.rule, ev.error].filter(Boolean).join(' ').toLowerCase();
+    return searchable.includes(f);
+  }
+
   function renderEvents() {
     const el = document.getElementById('event-stream');
     el.innerHTML = '';
-    for (const ev of state.events.slice(-200)) {
+    const visible = state.events.slice(-200).filter(matchesFilter);
+    for (const ev of visible) {
       el.appendChild(createEventNode(ev));
     }
     el.scrollTop = el.scrollHeight;
+    updateEventCount();
   }
 
   function renderEventItem(ev) {
+    if (!matchesFilter(ev)) { updateEventCount(); return; }
     const el = document.getElementById('event-stream');
     el.appendChild(createEventNode(ev));
     // Auto-scroll if near bottom
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 100) {
       el.scrollTop = el.scrollHeight;
     }
+    updateEventCount();
   }
+
+  function updateEventCount() {
+    const total = state.events.length;
+    const visible = eventFilter ? state.events.filter(matchesFilter).length : total;
+    const countEl = document.getElementById('event-count');
+    countEl.textContent = eventFilter ? `${visible}/${total}` : `${total}`;
+  }
+
+  // Filter input — debounced
+  let filterTimer = null;
+  document.getElementById('event-filter').addEventListener('input', (e) => {
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => {
+      eventFilter = e.target.value.trim();
+      renderEvents();
+    }, 150);
+  });
 
   function createEventNode(ev) {
     const div = document.createElement('div');
@@ -335,7 +377,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
       card.style.borderLeftWidth = '3px';
 
       const stateClass = c.state === 'running' ? 'running' : 'stopped';
-      const concPct = c.stats ? Math.round((c.activeCount / Math.max(1, 1)) * 100) : 0;
+      const concPct = c.stats ? Math.round((c.activeCount / Math.max(1, c.concurrency ?? 1)) * 100) : 0;
 
       card.innerHTML = `
         <div class="name">
@@ -365,9 +407,13 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
       const color = typeColor(s.type);
       const concPct = Math.round(s.meta.concentration * 100);
       const age = formatAge(s.meta.deposited_at);
+      const preview = payloadPreview(s.payload);
 
       item.innerHTML = `
-        <span class="stype" style="color:${color}">${s.type}</span>
+        <div class="signal-info">
+          <span class="stype" style="color:${color}">${s.type}</span>
+          ${preview ? `<span class="payload-preview">${preview}</span>` : ''}
+        </div>
         <div class="conc-bar"><div class="fill" style="width:${concPct}%;background:${color}"></div></div>
         <span class="age">${age}</span>
       `;
@@ -376,93 +422,134 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
     }
   }
 
-  // ── Signal Graph (d3-force) ────────────────────────────
+  // ── Signal Graph (d3-force) — incremental updates ──────
   let simulation = null;
+  let graphNodes = [];
+  let graphLinks = [];
+  let linkGroup = null;
+  let nodeGroup = null;
+  let graphInitialized = false;
+
   function renderGraph() {
     const svg = d3.select('#graph-svg');
     const panel = document.getElementById('panel-graph');
     if (!panel.classList.contains('active')) return;
-
-    svg.selectAll('*').remove();
 
     const width = panel.clientWidth;
     const height = panel.clientHeight;
     svg.attr('width', width).attr('height', height);
 
     if (!state.signals.length) {
+      svg.selectAll('*').remove();
+      graphInitialized = false;
       svg.append('text').attr('x', width/2).attr('y', height/2)
         .attr('text-anchor', 'middle').attr('fill', '#8888aa').attr('font-size', 14)
         .text('No signals — deposit some to see the graph');
       return;
     }
 
-    const nodes = state.signals.map(s => ({
-      id: s.id,
-      type: s.type,
-      concentration: s.meta.concentration,
-      deposited_by: s.meta.deposited_by,
-      signal: s,
-    }));
+    // Build node map preserving existing positions
+    const oldNodeMap = new Map(graphNodes.map(n => [n.id, n]));
+    const newNodes = state.signals.map(s => {
+      const existing = oldNodeMap.get(s.id);
+      return {
+        id: s.id,
+        type: s.type,
+        concentration: s.meta.concentration,
+        deposited_by: s.meta.deposited_by,
+        signal: s,
+        // Preserve position from previous render
+        x: existing?.x ?? (width / 2 + (Math.random() - 0.5) * 100),
+        y: existing?.y ?? (height / 2 + (Math.random() - 0.5) * 100),
+        vx: existing?.vx ?? 0,
+        vy: existing?.vy ?? 0,
+        fx: existing?.fx ?? null,
+        fy: existing?.fy ?? null,
+      };
+    });
 
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
-    const links = [];
+    const newNodeMap = new Map(newNodes.map(n => [n.id, n]));
+    const newLinks = [];
     for (const s of state.signals) {
       if (s.meta.caused_by) {
         for (const parentId of s.meta.caused_by) {
-          if (nodeMap.has(parentId)) {
-            links.push({ source: parentId, target: s.id });
+          if (newNodeMap.has(parentId)) {
+            newLinks.push({ source: parentId, target: s.id, id: parentId + '->' + s.id });
           }
         }
       }
     }
 
-    if (simulation) simulation.stop();
-    simulation = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(links).id(d => d.id).distance(80))
-      .force('charge', d3.forceManyBody().strength(-120))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(d => 8 + d.concentration * 16));
+    graphNodes = newNodes;
+    graphLinks = newLinks;
 
-    const link = svg.append('g')
-      .selectAll('line')
-      .data(links)
-      .enter().append('line')
+    // Initialize SVG groups on first render
+    if (!graphInitialized) {
+      svg.selectAll('*').remove();
+
+      svg.append('defs').append('marker')
+        .attr('id', 'arrow').attr('viewBox', '0 -5 10 10')
+        .attr('refX', 20).attr('refY', 0)
+        .attr('markerWidth', 6).attr('markerHeight', 6)
+        .attr('orient', 'auto')
+        .append('path').attr('d', 'M0,-5L10,0L0,5')
+        .attr('fill', '#333355');
+
+      linkGroup = svg.append('g').attr('class', 'links');
+      nodeGroup = svg.append('g').attr('class', 'nodes');
+      graphInitialized = true;
+    }
+
+    // D3 join pattern for links
+    const linkSel = linkGroup.selectAll('line').data(graphLinks, d => d.id);
+    linkSel.exit().remove();
+    const linkEnter = linkSel.enter().append('line')
       .attr('class', 'graph-link')
       .attr('stroke-width', 1.5)
       .attr('marker-end', 'url(#arrow)');
+    const link = linkEnter.merge(linkSel);
 
-    svg.append('defs').append('marker')
-      .attr('id', 'arrow').attr('viewBox', '0 -5 10 10')
-      .attr('refX', 20).attr('refY', 0)
-      .attr('markerWidth', 6).attr('markerHeight', 6)
-      .attr('orient', 'auto')
-      .append('path').attr('d', 'M0,-5L10,0L0,5')
-      .attr('fill', '#333355');
+    // D3 join pattern for nodes
+    const nodeSel = nodeGroup.selectAll('g.graph-node').data(graphNodes, d => d.id);
+    nodeSel.exit().transition().duration(300).attr('opacity', 0).remove();
 
-    const node = svg.append('g')
-      .selectAll('g')
-      .data(nodes)
-      .enter().append('g')
+    const nodeEnter = nodeSel.enter().append('g')
       .attr('class', 'graph-node')
+      .attr('opacity', 0)
       .call(d3.drag()
         .on('start', (event, d) => { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
         .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
         .on('end', (event, d) => { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
       );
+    nodeEnter.append('circle');
+    nodeEnter.append('text').attr('dy', 4);
+    nodeEnter.on('click', (event, d) => showSignalDetail(d.signal));
+    nodeEnter.transition().duration(300).attr('opacity', 1);
 
-    node.append('circle')
+    const node = nodeEnter.merge(nodeSel);
+
+    // Update node visuals (concentration may have changed)
+    node.select('circle')
+      .transition().duration(500)
       .attr('r', d => 6 + d.concentration * 12)
       .attr('fill', d => typeColor(d.type))
       .attr('fill-opacity', d => 0.3 + d.concentration * 0.7)
       .attr('stroke', d => typeColor(d.type))
       .attr('stroke-width', 1.5);
 
-    node.append('text')
+    node.select('text')
       .attr('dx', d => 10 + d.concentration * 12)
-      .attr('dy', 4)
       .text(d => d.type);
 
-    node.on('click', (event, d) => showSignalDetail(d.signal));
+    // Update simulation
+    if (simulation) simulation.stop();
+    simulation = d3.forceSimulation(graphNodes)
+      .force('link', d3.forceLink(graphLinks).id(d => d.id).distance(80))
+      .force('charge', d3.forceManyBody().strength(-120))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('collision', d3.forceCollide().radius(d => 8 + d.concentration * 16))
+      .alpha(0.3) // Gentle reheat, not full restart
+      .alphaDecay(0.05);
 
     simulation.on('tick', () => {
       link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
@@ -571,6 +658,21 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
   });
 
   // ── Helpers ────────────────────────────────────────────
+  function payloadPreview(payload) {
+    if (!payload || typeof payload !== 'object') return '';
+    // Pick the most informative field
+    for (const key of ['name', 'title', 'task', 'description', 'text', 'message']) {
+      if (typeof payload[key] === 'string') {
+        const v = payload[key];
+        return v.length > 40 ? v.slice(0, 40) + '...' : v;
+      }
+    }
+    const keys = Object.keys(payload);
+    if (keys.length === 0) return '';
+    const str = JSON.stringify(payload);
+    return str.length > 40 ? str.slice(0, 40) + '...' : str;
+  }
+
   function formatAge(depositedAt) {
     const s = Math.floor((Date.now() - depositedAt) / 1000);
     if (s < 60) return s + 's';
