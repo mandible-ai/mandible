@@ -1285,7 +1285,7 @@ describe('computeDependencyBoosts', () => {
     const boosts = computeDependencyBoosts(signals);
 
     expect(boosts.get('gh:o/r#1')).toBeCloseTo(0.20, 2); // 0.15 root + 0.05 * 1 dep
-    expect(boosts.has('gh:o/r#2')).toBe(false); // leaf — no boost
+    expect(boosts.get('gh:o/r#2')).toBeCloseTo(-0.15, 2); // leaf — penalized
   });
 
   it('boosts mid-graph node (has deps AND dependents) with only dependentBoost', () => {
@@ -1301,18 +1301,18 @@ describe('computeDependencyBoosts', () => {
     expect(boosts.get('gh:o/r#1')).toBeCloseTo(0.20, 2);
     // #2: mid-graph, 1 dependent, no root boost = 0.05
     expect(boosts.get('gh:o/r#2')).toBeCloseTo(0.05, 2);
-    // #3: leaf — no boost
-    expect(boosts.has('gh:o/r#3')).toBe(false);
+    // #3: leaf — penalized
+    expect(boosts.get('gh:o/r#3')).toBeCloseTo(-0.15, 2);
   });
 
-  it('gives no boost to leaf nodes (has deps, no dependents)', () => {
+  it('penalizes leaf nodes (has deps, no dependents)', () => {
     const signals = new Map<string, Signal>();
     signals.set('gh:o/r#1', makeSignal('gh:o/r#1', 0.5));
     signals.set('gh:o/r#2', makeSignal('gh:o/r#2', 0.5, ['gh:o/r#1']));
 
     const boosts = computeDependencyBoosts(signals);
 
-    expect(boosts.has('gh:o/r#2')).toBe(false);
+    expect(boosts.get('gh:o/r#2')).toBeCloseTo(-0.15, 2);
   });
 
   it('gives no boost to isolated nodes (no deps, no dependents)', () => {
@@ -1359,14 +1359,36 @@ describe('computeDependencyBoosts', () => {
       rootBoost: 0.10,
       dependentBoost: 0.08,
       maxBoost: 0.5,
+      leafPenalty: 0.20,
     });
 
     expect(boosts.get('gh:o/r#1')).toBeCloseTo(0.18, 2); // 0.10 + 0.08 * 1
+    expect(boosts.get('gh:o/r#2')).toBeCloseTo(-0.20, 2); // custom leaf penalty
   });
 
   it('returns empty map for empty signal map', () => {
     const boosts = computeDependencyBoosts(new Map());
     expect(boosts.size).toBe(0);
+  });
+
+  it('leaf penalty is configurable', () => {
+    const signals = new Map<string, Signal>();
+    signals.set('gh:o/r#1', makeSignal('gh:o/r#1', 0.5));
+    signals.set('gh:o/r#2', makeSignal('gh:o/r#2', 0.5, ['gh:o/r#1']));
+
+    const boosts = computeDependencyBoosts(signals, { leafPenalty: 0.25 });
+
+    expect(boosts.get('gh:o/r#2')).toBeCloseTo(-0.25, 2);
+  });
+
+  it('leaf penalty of 0 disables penalization', () => {
+    const signals = new Map<string, Signal>();
+    signals.set('gh:o/r#1', makeSignal('gh:o/r#1', 0.5));
+    signals.set('gh:o/r#2', makeSignal('gh:o/r#2', 0.5, ['gh:o/r#1']));
+
+    const boosts = computeDependencyBoosts(signals, { leafPenalty: 0 });
+
+    expect(boosts.has('gh:o/r#2')).toBe(false); // zero penalty = no entry
   });
 
   it('handles multiple dependents correctly', () => {
