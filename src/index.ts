@@ -16,6 +16,7 @@ export type {
   ActionContext,
   ClaimStrategy,
   ColonyConfig,
+  HeartbeatConfig,
   ColonyRuntime as IColonyRuntime,
   RuntimeState,
   RuntimeStats,
@@ -59,6 +60,8 @@ export { FilesystemEnvironment } from './environments/filesystem/index.js';
 export { DoltEnvironment } from './environments/dolt/index.js';
 export { GitHubEnvironment } from './environments/github/index.js';
 export type { GitHubEnvConfig } from './environments/github/index.js';
+export { RemoteEnvironment } from './environments/remote/index.js';
+export type { RemoteEnvConfig } from './environments/remote/index.js';
 
 // Default policies
 export { DEFAULT_DECAY_POLICY } from './core/types.js';
@@ -94,6 +97,7 @@ export type {
   ActionHandler,
   AgentProviderConfig,
   AgentResult,
+  BedrockConfig,
   StructuredOutputConfig,
   BashProviderConfig,
   LLMCallFunction,

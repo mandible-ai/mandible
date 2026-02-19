@@ -3,28 +3,42 @@
   "version": "0.1.0",
   "description": "Universal stigmergy framework for autonomous agent coordination — like ant colonies using pheromone trails",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
     },
     "./core": {
-      "types": "./dist/core/index.d.ts",
-      "import": "./dist/core/index.js"
+      "types": "./dist/src/core/index.d.ts",
+      "import": "./dist/src/core/index.js",
+      "default": "./dist/src/core/index.js"
     },
     "./environments/filesystem": {
-      "types": "./dist/environments/filesystem/index.d.ts",
-      "import": "./dist/environments/filesystem/index.js"
+      "types": "./dist/src/environments/filesystem/index.d.ts",
+      "import": "./dist/src/environments/filesystem/index.js",
+      "default": "./dist/src/environments/filesystem/index.js"
     },
     "./providers": {
-      "types": "./dist/providers/index.d.ts",
-      "import": "./dist/providers/index.js"
+      "types": "./dist/src/providers/index.d.ts",
+      "import": "./dist/src/providers/index.js",
+      "default": "./dist/src/providers/index.js"
+    },
+    "./cloud": {
+      "types": "./dist/src/cloud/index.d.ts",
+      "import": "./dist/src/cloud/index.js",
+      "default": "./dist/src/cloud/index.js"
+    },
+    "./environments/remote": {
+      "types": "./dist/src/environments/remote/index.d.ts",
+      "import": "./dist/src/environments/remote/index.js",
+      "default": "./dist/src/environments/remote/index.js"
     }
   },
   "bin": {
-    "mandible": "./dist/cli/index.js"
+    "mandible": "./dist/src/cli/index.js"
   },
   "files": [
     "dist",
@@ -53,7 +67,8 @@
     "dev": "tsx watch examples/code-pipeline/index.ts",
     "demo": "tsx examples/code-pipeline/index.ts",
     "test": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "demo:repo-maintenance": "tsx src/cli/index.ts dev examples/repo-maintenance/mandible.config.ts"
   },
   "dependencies": {
     "@noble/ed25519": "^3.0.0",
@@ -66,6 +81,7 @@
     "@ai-sdk/anthropic": ">=0.1.0",
     "@ai-sdk/google": ">=0.1.0",
     "@ai-sdk/openai": ">=0.1.0",
+    "@anthropic-ai/bedrock-sdk": ">=0.9.0",
     "@anthropic-ai/claude-agent-sdk": ">=0.1.0",
     "@anthropic-ai/sdk": ">=0.30.0",
     "ai": ">=3.0.0",
@@ -73,6 +89,9 @@
     "zod": ">=3.0.0"
   },
   "peerDependenciesMeta": {
+    "@anthropic-ai/bedrock-sdk": {
+      "optional": true
+    },
     "@anthropic-ai/sdk": {
       "optional": true
     },

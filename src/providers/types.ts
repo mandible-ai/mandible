@@ -28,6 +28,33 @@ export type ActionHandler<T = Record<string, unknown>> = (
 ) => Promise<void>;
 
 // ----------------------------------------------------------
+// Bedrock config
+// ----------------------------------------------------------
+
+/**
+ * Config for routing requests through AWS Bedrock.
+ * Used by both withAgent (env vars) and withStructuredOutput (SDK client).
+ */
+export interface BedrockConfig {
+  /** AWS region for Bedrock. Required. */
+  region: string;
+  /** Override the Bedrock model ID (e.g. 'us.anthropic.claude-sonnet-4-6'). */
+  model?: string;
+  /** AWS access key ID. Falls back to AWS SDK credential chain. */
+  accessKeyId?: string;
+  /** AWS secret access key. */
+  secretAccessKey?: string;
+  /** AWS session token (for temporary credentials). */
+  sessionToken?: string;
+  /** AWS profile name (for SSO/profile-based auth). */
+  profile?: string;
+  /** Bedrock Guardrail ID. */
+  guardrailId?: string;
+  /** Bedrock Guardrail version. */
+  guardrailVersion?: string;
+}
+
+// ----------------------------------------------------------
 // Provider configs
 // ----------------------------------------------------------
 
@@ -106,6 +133,12 @@ export interface AgentProviderConfig<T = Record<string, unknown>> {
   env?: Record<string, string>;
 
   /**
+   * Route the agent through AWS Bedrock.
+   * Sets the required env vars for the Claude Agent SDK automatically.
+   */
+  bedrock?: BedrockConfig;
+
+  /**
    * Map the agent's output to signal deposits.
    * If not provided, the raw output is deposited as-is.
    */
@@ -148,17 +181,24 @@ export interface StructuredOutputConfig<T = Record<string, unknown>, R = Record<
   /**
    * Provider SDK to use for the LLM call.
    * 'anthropic' = @anthropic-ai/sdk
+   * 'bedrock' = @anthropic-ai/bedrock-sdk (Claude via AWS Bedrock)
    * 'openai' = openai SDK
    * 'vercel-ai' = Vercel AI SDK (ai package)
    * Or pass a custom function.
    */
-  provider?: 'anthropic' | 'openai' | 'vercel-ai' | LLMCallFunction<R>;
+  provider?: 'anthropic' | 'bedrock' | 'openai' | 'vercel-ai' | LLMCallFunction<R>;
 
   /** Build the prompt from the signal. */
   prompt: string | ((signal: Signal<T>) => string | Promise<string>);
 
   /** System prompt. */
   systemPrompt?: string;
+
+  /**
+   * Bedrock configuration. Required when provider is 'bedrock'.
+   * Provides AWS region, credentials, and optional guardrail settings.
+   */
+  bedrockConfig?: BedrockConfig;
 
   /**
    * Zod schema for the expected output.
