@@ -16,6 +16,7 @@ export type {
   ActionContext,
   ClaimStrategy,
   ColonyConfig,
+  HeartbeatConfig,
   ColonyRuntime as IColonyRuntime,
   RuntimeState,
   RuntimeStats,
