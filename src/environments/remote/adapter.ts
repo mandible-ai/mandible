@@ -296,11 +296,12 @@ export class RemoteEnvironment implements Environment {
 
   async observe(query: SignalQuery): Promise<Signal[]> {
     await this.ensureConnected();
-    return this.request<Signal[]>({
+    const result = await this.request<Signal[] | null>({
       type: 'observe',
       id: this.nextId(),
       query: toSerializableQuery(query),
     });
+    return result ?? [];
   }
 
   async deposit(
@@ -399,7 +400,7 @@ export class RemoteEnvironment implements Environment {
     query: SignalQuery & { includeWithdrawn?: boolean }
   ): Promise<Signal[]> {
     await this.ensureConnected();
-    return this.request<Signal[]>({
+    const result = await this.request<Signal[] | null>({
       type: 'history',
       id: this.nextId(),
       query: {
@@ -407,6 +408,7 @@ export class RemoteEnvironment implements Environment {
         includeWithdrawn: query.includeWithdrawn,
       },
     });
+    return result ?? [];
   }
 
   async decay(): Promise<DecayResult> {
@@ -419,10 +421,11 @@ export class RemoteEnvironment implements Environment {
 
   async snapshot(): Promise<Signal[]> {
     await this.ensureConnected();
-    return this.request<Signal[]>({
+    const result = await this.request<Signal[] | null>({
       type: 'snapshot',
       id: this.nextId(),
     });
+    return result ?? [];
   }
 
   // ----------------------------------------------------------
