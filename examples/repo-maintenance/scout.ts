@@ -2,7 +2,7 @@
 // PURPOSE: Deposits one `issue:detected` signal per issue found, plus a `scan:completed` summary.
 
 import type { Environment, Signal } from '../../src/core/types.js';
-import type { AgentResult, SignalDeposit } from '../../src/providers/types.js';
+import type { AgentResult, SignalDeposit, BedrockConfig } from '../../src/providers/types.js';
 import { colony } from '../../src/dsl/builder.js';
 import { withAgent } from '../../src/providers/agent.js';
 
@@ -43,6 +43,8 @@ export interface ScoutColonyOptions {
   allowedTools?: string[];
   /** Disallowed tools. Defaults to ['Edit', 'Write']. */
   disallowedTools?: string[];
+  /** Route through AWS Bedrock instead of direct Anthropic API. */
+  bedrock?: BedrockConfig;
 }
 
 // ----------------------------------------------------------
@@ -62,6 +64,7 @@ export function createScoutColony(
     maxTurns = 50,
     allowedTools = ['Read', 'Glob', 'Grep', 'Bash'],
     disallowedTools = ['Edit', 'Write'],
+    bedrock,
   } = options;
 
   const types = Array.isArray(senseTypes) ? senseTypes : [senseTypes];
@@ -133,6 +136,7 @@ export function createScoutColony(
       workingDirectory: repoRoot,
       maxBudgetUsd,
       maxTurns,
+      bedrock,
 
       output: (result: AgentResult, signal: Signal): SignalDeposit[] => {
         const issues = parseScoutOutput(result.text);
