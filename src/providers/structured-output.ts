@@ -36,6 +36,7 @@ import type {
   ActionHandler,
   SignalDeposit,
   LLMCallFunction,
+  BedrockConfig,
 } from './types.js';
 
 /**
@@ -58,6 +59,7 @@ export function withStructuredOutput<
     temperature = 0,
     route,
     autoWithdraw = true,
+    bedrockConfig,
   } = config;
 
   return async (signal: Signal<T>, ctx: ActionContext) => {
@@ -87,6 +89,7 @@ export function withStructuredOutput<
         maxTokens,
         temperature,
         schema,
+        bedrockConfig,
       });
     }
 
@@ -124,7 +127,7 @@ export function withStructuredOutput<
 // ----------------------------------------------------------
 
 async function callProvider<R>(
-  provider: 'anthropic' | 'openai' | 'vercel-ai',
+  provider: 'anthropic' | 'bedrock' | 'openai' | 'vercel-ai',
   model: string,
   prompt: string,
   options: {
@@ -132,17 +135,20 @@ async function callProvider<R>(
     maxTokens?: number;
     temperature?: number;
     schema?: any;
+    bedrockConfig?: BedrockConfig;
   }
 ): Promise<R> {
   switch (provider) {
     case 'anthropic':
       return callAnthropic(model, prompt, options);
+    case 'bedrock':
+      return callBedrock(model, prompt, options);
     case 'openai':
       return callOpenAI(model, prompt, options);
     case 'vercel-ai':
       return callVercelAI(model, prompt, options);
     default:
-      throw new Error(`Unknown provider: ${provider}. Use 'anthropic', 'openai', 'vercel-ai', or pass a custom function.`);
+      throw new Error(`Unknown provider: ${provider}. Use 'anthropic', 'bedrock', 'openai', 'vercel-ai', or pass a custom function.`);
   }
 }
 
@@ -175,6 +181,58 @@ async function callAnthropic<R>(
       throw new Error(
         'Anthropic provider requires @anthropic-ai/sdk. Install it:\n' +
         '  npm install @anthropic-ai/sdk'
+      );
+    }
+    throw err;
+  }
+}
+
+async function callBedrock<R>(
+  model: string,
+  prompt: string,
+  options: { systemPrompt?: string; maxTokens?: number; temperature?: number; bedrockConfig?: BedrockConfig }
+): Promise<R> {
+  if (!options.bedrockConfig) {
+    throw new Error(
+      "Bedrock provider requires bedrockConfig. Pass { provider: 'bedrock', bedrockConfig: { region: '...' } }."
+    );
+  }
+
+  try {
+    // @ts-expect-error — optional peer dependency, may not be installed
+    const { default: AnthropicBedrock } = await import('@anthropic-ai/bedrock-sdk');
+
+    const clientOptions: Record<string, unknown> = {
+      awsRegion: options.bedrockConfig.region,
+    };
+    if (options.bedrockConfig.accessKeyId) clientOptions.awsAccessKey = options.bedrockConfig.accessKeyId;
+    if (options.bedrockConfig.secretAccessKey) clientOptions.awsSecretKey = options.bedrockConfig.secretAccessKey;
+    if (options.bedrockConfig.sessionToken) clientOptions.awsSessionToken = options.bedrockConfig.sessionToken;
+    if (options.bedrockConfig.profile) clientOptions.awsProfile = options.bedrockConfig.profile;
+
+    const client = new AnthropicBedrock(clientOptions);
+
+    const requestOptions: Record<string, unknown> = {
+      model: options.bedrockConfig.model ?? model,
+      max_tokens: options.maxTokens ?? 4096,
+      messages: [{ role: 'user', content: prompt }],
+    };
+    if (options.temperature !== undefined) requestOptions.temperature = options.temperature;
+    if (options.systemPrompt) requestOptions.system = options.systemPrompt;
+
+    const response = await (client as any).messages.create(requestOptions);
+
+    const text = response.content
+      .filter((block: any) => block.type === 'text')
+      .map((block: any) => block.text)
+      .join('');
+
+    return parseJsonResponse<R>(text);
+  } catch (err: any) {
+    if (err.code === 'MODULE_NOT_FOUND' || err.code === 'ERR_MODULE_NOT_FOUND') {
+      throw new Error(
+        'Bedrock provider requires @anthropic-ai/bedrock-sdk. Install it:\n' +
+        '  npm install @anthropic-ai/bedrock-sdk'
       );
     }
     throw err;

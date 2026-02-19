@@ -2,7 +2,7 @@
 // PURPOSE: Deposits fix:proposed on success or fix:failed on failure.
 
 import type { Environment, Signal } from '../../src/core/types.js';
-import type { AgentResult, SignalDeposit } from '../../src/providers/types.js';
+import type { AgentResult, SignalDeposit, BedrockConfig } from '../../src/providers/types.js';
 import { colony } from '../../src/dsl/builder.js';
 import { withAgent } from '../../src/providers/agent.js';
 
@@ -61,6 +61,8 @@ export interface FixerColonyOptions {
   concurrency?: number;
   /** Claim lease duration in ms. Defaults to 120_000 (2 min). */
   claimLeaseDuration?: number;
+  /** Route through AWS Bedrock instead of direct Anthropic API. */
+  bedrock?: BedrockConfig;
 }
 
 // ----------------------------------------------------------
@@ -82,6 +84,7 @@ export function createFixerColony(
     disallowedTools = [],
     concurrency = 2,
     claimLeaseDuration = 120_000,
+    bedrock,
   } = options;
 
   const types = Array.isArray(senseTypes) ? senseTypes : [senseTypes];
@@ -184,6 +187,7 @@ export function createFixerColony(
       workingDirectory: repoRoot,
       maxBudgetUsd,
       maxTurns,
+      bedrock,
 
       output: (result: AgentResult, signal: Signal): SignalDeposit[] => {
         const parsed = parseFixerOutput(result.text);

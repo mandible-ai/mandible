@@ -2,7 +2,7 @@
 // Wraps the Claude Agent SDK AsyncGenerator to give colonies coding capabilities.
 
 import type { Signal, ActionContext } from '../core/types.js';
-import type { AgentProviderConfig, AgentResult, ActionHandler, SignalDeposit } from './types.js';
+import type { AgentProviderConfig, AgentResult, ActionHandler, SignalDeposit, BedrockConfig } from './types.js';
 
 /**
  * Creates an action handler powered by the Claude Agent SDK.
@@ -34,6 +34,7 @@ export function withAgent<T = Record<string, unknown>>(
     permissionMode = 'bypassPermissions',
     onMessage,
     env,
+    bedrock,
     output,
     autoWithdraw = true,
   } = config;
@@ -70,7 +71,13 @@ export function withAgent<T = Record<string, unknown>>(
       if (resolvedAllowedTools) queryOptions.allowedTools = resolvedAllowedTools;
       if (disallowedTools) queryOptions.disallowedTools = disallowedTools;
       if (maxTurns !== undefined) queryOptions.maxTurns = maxTurns;
-      if (env) queryOptions.env = env;
+
+      // Merge Bedrock env vars with user-provided env (user takes precedence)
+      const bedrockEnv = bedrock ? buildBedrockEnv(bedrock) : undefined;
+      const mergedEnv = bedrockEnv || env
+        ? { ...bedrockEnv, ...env }
+        : undefined;
+      if (mergedEnv) queryOptions.env = mergedEnv;
 
       const generator = sdk.query({
         prompt: resolvedPrompt,
@@ -159,6 +166,35 @@ async function consumeGenerator(
     subtype: resultMessage.subtype ?? 'success',
     messages,
   };
+}
+
+/**
+ * Builds env vars for routing the Claude Agent SDK through AWS Bedrock.
+ * Exported for testing.
+ */
+export function buildBedrockEnv(config: BedrockConfig): Record<string, string> {
+  const env: Record<string, string> = {
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    AWS_REGION: config.region,
+  };
+
+  if (config.model) env.ANTHROPIC_MODEL = config.model;
+  if (config.accessKeyId) env.AWS_ACCESS_KEY_ID = config.accessKeyId;
+  if (config.secretAccessKey) env.AWS_SECRET_ACCESS_KEY = config.secretAccessKey;
+  if (config.sessionToken) env.AWS_SESSION_TOKEN = config.sessionToken;
+  if (config.profile) env.AWS_PROFILE = config.profile;
+
+  if (config.guardrailId) {
+    const headers: Record<string, string> = {
+      'x-amzn-bedrock-guardrail-identifier': config.guardrailId,
+    };
+    if (config.guardrailVersion) {
+      headers['x-amzn-bedrock-guardrail-version'] = config.guardrailVersion;
+    }
+    env.ANTHROPIC_CUSTOM_HEADERS = JSON.stringify(headers);
+  }
+
+  return env;
 }
 
 export function buildDefaultSystemPrompt(colonyName: string): string {
