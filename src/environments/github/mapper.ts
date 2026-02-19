@@ -2,6 +2,7 @@
 // PURPOSE: Type mapping, payload extraction, concentration scoring, Golem body parsing
 
 import type { GitHubIssue, GitHubEnvConfig } from './types.js';
+import type { Signal } from '../../core/types.js';
 
 // ----------------------------------------------------------
 // Type Mapper — labels → signal type
@@ -236,4 +237,55 @@ export function defaultConcentrationMapper(
 
   const raw = baseFreshness + commentBoost + assignedBoost + milestoneBoost;
   return Math.max(floor, Math.min(1.0, raw));
+}
+
+// ----------------------------------------------------------
+// Dependency Boost — graph-aware concentration post-processing
+// ----------------------------------------------------------
+
+/**
+ * Compute concentration boosts based on the dependency graph.
+ * Signals that unblock more downstream work get higher concentration.
+ *
+ * - Root node boost: signal has no caused_by AND other signals depend on it
+ * - Dependent boost: per-dependent signal that lists this signal in caused_by
+ * - Boosts are capped at maxBoost and do NOT mutate the input signals
+ */
+export function computeDependencyBoosts(
+  signals: Map<string, Signal>,
+  options?: { rootBoost?: number; dependentBoost?: number; maxBoost?: number }
+): Map<string, number> {
+  const rootBoost = options?.rootBoost ?? 0.15;
+  const dependentBoost = options?.dependentBoost ?? 0.05;
+  const maxBoost = options?.maxBoost ?? 0.3;
+
+  // Build reverse-dep map: signalId → count of signals that depend on it
+  const dependentCount = new Map<string, number>();
+  for (const signal of signals.values()) {
+    const causedBy = signal.meta.caused_by;
+    if (!causedBy) continue;
+    for (const depId of causedBy) {
+      dependentCount.set(depId, (dependentCount.get(depId) ?? 0) + 1);
+    }
+  }
+
+  const boosts = new Map<string, number>();
+
+  for (const [id, signal] of signals) {
+    const hasDependencies = (signal.meta.caused_by?.length ?? 0) > 0;
+    const numDependents = dependentCount.get(id) ?? 0;
+
+    if (numDependents === 0) continue; // leaf or isolated — no boost
+
+    let boost = Math.min(maxBoost, numDependents * dependentBoost);
+
+    // Root nodes (nothing they depend on, but others depend on them) get extra boost
+    if (!hasDependencies) {
+      boost = Math.min(maxBoost, boost + rootBoost);
+    }
+
+    boosts.set(id, boost);
+  }
+
+  return boosts;
 }
