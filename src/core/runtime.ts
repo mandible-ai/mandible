@@ -193,7 +193,7 @@ export class ColonyRuntime implements IColonyRuntime {
         }
       } catch (err) {
         this._stats.errors++;
-        this.emit('colony:error', err);
+        this.emit('action:failed', err);
         this.log('error', `Sensor poll error: ${err}`);
       }
     };
@@ -282,7 +282,7 @@ export class ColonyRuntime implements IColonyRuntime {
             signalId: signal.id,
             signalType: signal.type,
           });
-          this.emit('signal:claim-conflict', signal, colonyName);
+          this.emit('signal:claim_failed', signal, colonyName);
           this.log('debug', `Claim conflict on ${signal.id} — another colony got it`);
           this.processingSignals.delete(signal.id);
           this._activeCount--;
@@ -324,7 +324,7 @@ export class ColonyRuntime implements IColonyRuntime {
         rule: rule.name,
         duration: actionDuration,
       });
-      this.emit('signal:processed', signal, colonyName);
+      this.emit('action:completed', signal, colonyName);
 
       // 5. Auto-withdraw if configured
       if (this.definition.config?.autoWithdraw) {
@@ -350,7 +350,7 @@ export class ColonyRuntime implements IColonyRuntime {
         duration: actionDuration,
         error: err instanceof Error ? err.message : String(err),
       });
-      this.emit('colony:error', err, signal);
+      this.emit('action:failed', err, signal);
       this.log('error', `Error processing signal ${signal.id}: ${err}`);
 
       // Release claim on error so another agent can pick it up
