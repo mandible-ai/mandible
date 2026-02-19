@@ -222,10 +222,10 @@ async function main() {
 
   // Wire up observability
   for (const [name, rt] of [['shaper', shaperRuntime], ['critic', criticRuntime], ['keeper', keeperRuntime]] as const) {
-    rt.on('signal:processed', (signal: Signal) => {
+    rt.on('action:completed', (signal: Signal) => {
       // Just for demo visibility
     });
-    rt.on('signal:claim-conflict', (signal: Signal) => {
+    rt.on('signal:claim_failed', (signal: Signal) => {
       console.log(`   ⚡ Claim conflict in ${name}: ${signal.type}`);
     });
   }

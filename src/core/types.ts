@@ -327,15 +327,12 @@ export interface RuntimeStats {
   avgProcessingMs: number;
 }
 
-export type RuntimeEvent =
-  | 'signal:sensed'
-  | 'signal:claimed'
-  | 'signal:processed'
-  | 'signal:deposited'
-  | 'signal:claim-conflict'
-  | 'colony:started'
-  | 'colony:stopped'
-  | 'colony:error';
+/**
+ * Runtime event types — the canonical set of events emitted by the stigmergy loop.
+ * Re-exported from events.ts as RuntimeEvent for backward compatibility.
+ */
+import type { RuntimeEventType } from './events.js';
+export type RuntimeEvent = RuntimeEventType;
 
 // ----------------------------------------------------------
 // Decay — pheromone evaporation

@@ -610,12 +610,12 @@ describe('runtime — legacy on() events', () => {
     expect(events).toEqual(['started', 'stopped']);
   });
 
-  it('fires signal:processed after action completes', async () => {
+  it('fires action:completed after action completes', async () => {
     const def = buildColony(async () => {});
     const rt = createRuntime(def);
 
     let processedSignal: Signal | undefined;
-    rt.on('signal:processed', (signal: Signal) => {
+    rt.on('action:completed', (signal: Signal) => {
       processedSignal = signal;
     });
 
