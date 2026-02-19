@@ -147,6 +147,7 @@ export function createScoutColony(
             type: 'issue:detected',
             payload: issue as unknown as Record<string, unknown>,
             tags: [issue.category, issue.severity],
+            ttl: 60 * 60_000, // 60 min — survive long enough for fixer to work the backlog
           });
         }
 
