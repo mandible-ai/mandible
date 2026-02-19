@@ -263,6 +263,9 @@ export interface ActionContext {
 
   /** Log a message (routed through the framework's logging) */
   log(message: string, level?: 'debug' | 'info' | 'warn' | 'error'): void;
+
+  /** Manually deposit a heartbeat signal (no-op if heartbeat not configured) */
+  heartbeat(payload?: Record<string, unknown>): Promise<void>;
 }
 
 export type ClaimStrategy =
@@ -289,6 +292,20 @@ export interface ColonyConfig {
     maxAttempts: number;
     backoffMs: number;
   };
+
+  /** Heartbeat configuration — deposits periodic signals during long-running actions */
+  heartbeat?: HeartbeatConfig;
+}
+
+export interface HeartbeatConfig {
+  /** Milliseconds between heartbeat deposits */
+  interval: number;
+
+  /** TTL in ms for heartbeat signals. Defaults to Math.round(interval * 2.5) */
+  ttl?: number;
+
+  /** Signal type for heartbeat. Defaults to 'heartbeat:{colonyName}' */
+  type?: string;
 }
 
 // ----------------------------------------------------------

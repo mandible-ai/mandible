@@ -24,6 +24,7 @@ import type {
   Rule,
   Subscription,
   DecayPolicy,
+  HeartbeatConfig,
 } from './types.js';
 import { prioritize } from './signal.js';
 import { DEFAULT_DECAY_POLICY } from './types.js';
@@ -300,7 +301,9 @@ export class ColonyRuntime implements IColonyRuntime {
         this.emit('signal:claimed', signal, colonyName);
       }
 
-      // 4. Execute the action
+      // 4. Execute the action (with heartbeat if configured)
+      const heartbeatState = this.createHeartbeatState(signal, rule);
+
       this.emitEvent({
         type: 'action:started',
         colony: colonyName,
@@ -310,8 +313,14 @@ export class ColonyRuntime implements IColonyRuntime {
         rule: rule.name,
       });
 
-      const ctx = this.createActionContext(signal);
-      await this.executeWithRetry(rule, signal, ctx);
+      heartbeatState?.start();
+      const ctx = this.createActionContext(signal, heartbeatState?.deposit);
+
+      try {
+        await this.executeWithRetry(rule, signal, ctx);
+      } finally {
+        if (heartbeatState) await heartbeatState.stop();
+      }
 
       const actionDuration = Date.now() - startTime;
       this._stats.signalsProcessed++;
@@ -435,7 +444,10 @@ export class ColonyRuntime implements IColonyRuntime {
   // Action context factory
   // ----------------------------------------------------------
 
-  private createActionContext(triggeringSignal: Signal): ActionContext {
+  private createActionContext(
+    triggeringSignal: Signal,
+    heartbeatDeposit?: (payload?: Record<string, unknown>) => Promise<void>,
+  ): ActionContext {
     const env = this.definition.environment;
     const colonyName = this.definition.name;
     const runtime = this;
@@ -481,7 +493,76 @@ export class ColonyRuntime implements IColonyRuntime {
       log(message, level = 'info') {
         runtime.log(level, `[${colonyName}] ${message}`);
       },
+
+      async heartbeat(payload?) {
+        if (heartbeatDeposit) await heartbeatDeposit(payload);
+      },
     };
+  }
+
+  // ----------------------------------------------------------
+  // Heartbeat — periodic signals during long-running actions
+  // ----------------------------------------------------------
+
+  private createHeartbeatState(
+    triggeringSignal: Signal,
+    rule: Rule,
+  ): { start: () => void; stop: () => Promise<void>; deposit: (payload?: Record<string, unknown>) => Promise<void> } | undefined {
+    const heartbeatConfig = this.definition.config?.heartbeat;
+    if (!heartbeatConfig) return undefined;
+
+    const env = this.definition.environment;
+    const colonyName = this.definition.name;
+    const signalType = heartbeatConfig.type ?? `heartbeat:${colonyName}`;
+    const ttl = heartbeatConfig.ttl ?? Math.round(heartbeatConfig.interval * 2.5);
+    const startedAt = Date.now();
+
+    let lastHeartbeatId: string | undefined;
+    let timer: ReturnType<typeof setInterval> | undefined;
+
+    const deposit = async (payload?: Record<string, unknown>) => {
+      try {
+        const newSignal = await env.deposit({
+          type: signalType,
+          payload: {
+            signalId: triggeringSignal.id,
+            signalType: triggeringSignal.type,
+            rule: rule.name,
+            startedAt,
+            elapsed: Date.now() - startedAt,
+            ...payload,
+          },
+          meta: {
+            deposited_by: colonyName,
+            ttl,
+            tags: ['heartbeat'],
+            caused_by: [triggeringSignal.id],
+          },
+        });
+
+        // Withdraw previous heartbeat (swap pattern: always 0 or 1 active)
+        if (lastHeartbeatId) {
+          try { await env.withdraw(lastHeartbeatId); } catch { /* best effort */ }
+        }
+        lastHeartbeatId = newSignal.id;
+      } catch {
+        // Never crash the action due to heartbeat failure
+      }
+    };
+
+    const start = () => {
+      timer = setInterval(() => { deposit(); }, heartbeatConfig.interval);
+    };
+
+    const stop = async () => {
+      if (timer) clearInterval(timer);
+      if (lastHeartbeatId) {
+        try { await env.withdraw(lastHeartbeatId); } catch { /* best effort */ }
+        lastHeartbeatId = undefined;
+      }
+    };
+
+    return { start, stop, deposit };
   }
 
   // ----------------------------------------------------------
