@@ -49,7 +49,7 @@ export interface FixerColonyOptions {
   name?: string;
   /** Model to use. Defaults to 'claude-sonnet-4-5-20250929'. */
   model?: string;
-  /** Max budget per fix in USD. Defaults to 1.00. */
+  /** Max budget per fix in USD. Defaults to 3.00. */
   maxBudgetUsd?: number;
   /** Max conversation turns. Defaults to 80. */
   maxTurns?: number;
@@ -59,7 +59,7 @@ export interface FixerColonyOptions {
   disallowedTools?: string[];
   /** Max concurrent fix attempts. Defaults to 2. */
   concurrency?: number;
-  /** Claim lease duration in ms. Defaults to 120_000 (2 min). */
+  /** Claim lease duration in ms. Defaults to 600_000 (10 min). */
   claimLeaseDuration?: number;
   /** Route through AWS Bedrock instead of direct Anthropic API. */
   bedrock?: BedrockConfig;
@@ -78,12 +78,12 @@ export function createFixerColony(
     senseTypes = 'issue:detected',
     name = 'fixer',
     model = 'claude-sonnet-4-5-20250929',
-    maxBudgetUsd = 1.00,
+    maxBudgetUsd = 3.00,
     maxTurns = 80,
     allowedTools = ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep'],
     disallowedTools = [],
     concurrency = 2,
-    claimLeaseDuration = 120_000,
+    claimLeaseDuration = 600_000,
     bedrock,
   } = options;
 
