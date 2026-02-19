@@ -1,40 +1,22 @@
-// ============================================================
-// withAgent — Claude Code SDK Provider
-// ============================================================
-// Wraps the Claude Code SDK to give colonies full agentic
-// capabilities: file editing, bash execution, code review,
-// multi-turn tool use loops.
-//
-// This is the heavyweight provider — use it for colonies that
-// need to do real coding work (Shapers, complex Critics).
-//
-// Usage:
-//   colony('shaper')
-//     .do('shape', withAgent({
-//       prompt: (signal) => `Implement: ${signal.payload.description}`,
-//       systemPrompt: 'You are a senior engineer. Write clean, tested code.',
-//       tools: ['file_edit', 'bash'],
-//       workingDirectory: (signal) => `/workspace/${signal.payload.name}`,
-//       output: { type: 'artifact:shaped', tags: ['needs-review'] },
-//     }))
-//     .build();
-// ============================================================
+// PURPOSE: withAgent — Claude Agent SDK provider for full agentic colony actions.
+// Wraps the Claude Agent SDK AsyncGenerator to give colonies coding capabilities.
 
 import type { Signal, ActionContext } from '../core/types.js';
-import type { AgentProviderConfig, ActionHandler, SignalDeposit } from './types.js';
+import type { AgentProviderConfig, AgentResult, ActionHandler, SignalDeposit } from './types.js';
 
 /**
- * Creates an action handler powered by the Claude Code SDK.
+ * Creates an action handler powered by the Claude Agent SDK.
  *
  * The SDK must be installed separately:
- *   npm install @anthropic-ai/claude-code
+ *   npm install @anthropic-ai/claude-agent-sdk
  *
  * The handler:
  * 1. Builds a prompt from the signal
- * 2. Spawns a Claude Code agent session with the specified tools
- * 3. Lets the agent work (tool use loop runs internally)
- * 4. Maps the agent's output to signal deposits
- * 5. Optionally withdraws the triggering signal
+ * 2. Spawns a Claude agent session via the SDK's query() AsyncGenerator
+ * 3. Consumes all messages, calling onMessage for observability
+ * 4. Extracts the final result (text, cost, duration, usage)
+ * 5. Maps the agent's output to signal deposits
+ * 6. Optionally withdraws the triggering signal
  */
 export function withAgent<T = Record<string, unknown>>(
   config: AgentProviderConfig<T>
@@ -43,12 +25,21 @@ export function withAgent<T = Record<string, unknown>>(
     model = 'claude-sonnet-4-5-20250929',
     prompt,
     systemPrompt,
+    allowedTools,
     tools,
+    disallowedTools,
     workingDirectory,
-    maxTokens = 8192,
+    maxTurns,
+    maxBudgetUsd = 1.0,
+    permissionMode = 'bypassPermissions',
+    onMessage,
+    env,
     output,
     autoWithdraw = true,
   } = config;
+
+  // Resolve allowedTools with backward compat for deprecated `tools`
+  const resolvedAllowedTools = allowedTools ?? tools;
 
   return async (signal: Signal<T>, ctx: ActionContext) => {
     // 1. Resolve the prompt
@@ -61,31 +52,38 @@ export function withAgent<T = Record<string, unknown>>(
       ? workingDirectory(signal)
       : workingDirectory;
 
-    // 3. Call Claude Code SDK
-    let agentResult: any;
+    // 3. Call Claude Agent SDK
+    let agentResult: AgentResult;
     try {
       // Dynamic import — SDK is an optional peer dependency
-      const { query } = await import('@anthropic-ai/claude-code');
+      const sdk = await import('@anthropic-ai/claude-agent-sdk');
 
-      const messages = await query({
+      const queryOptions: Record<string, unknown> = {
+        model,
+        systemPrompt: systemPrompt ?? buildDefaultSystemPrompt(ctx.colony),
+        cwd: cwd ?? process.cwd(),
+        permissionMode,
+        allowDangerouslySkipPermissions: permissionMode === 'bypassPermissions',
+        maxBudgetUsd,
+      };
+
+      if (resolvedAllowedTools) queryOptions.allowedTools = resolvedAllowedTools;
+      if (disallowedTools) queryOptions.disallowedTools = disallowedTools;
+      if (maxTurns !== undefined) queryOptions.maxTurns = maxTurns;
+      if (env) queryOptions.env = env;
+
+      const generator = sdk.query({
         prompt: resolvedPrompt,
-        options: {
-          model,
-          maxTokens,
-          systemPrompt: systemPrompt ?? buildDefaultSystemPrompt(ctx.colony),
-          allowedTools: tools,
-          cwd: cwd ?? process.cwd(),
-        },
+        options: queryOptions,
       });
 
-      // Extract the final assistant text from the conversation
-      agentResult = extractResult(messages);
+      agentResult = await consumeGenerator(generator, onMessage);
 
     } catch (err: any) {
-      if (err.code === 'MODULE_NOT_FOUND') {
+      if (err.code === 'ERR_MODULE_NOT_FOUND' || err.code === 'MODULE_NOT_FOUND') {
         throw new Error(
-          'withAgent requires @anthropic-ai/claude-code. Install it:\n' +
-          '  npm install @anthropic-ai/claude-code'
+          'withAgent requires @anthropic-ai/claude-agent-sdk. Install it:\n' +
+          '  npm install @anthropic-ai/claude-agent-sdk'
         );
       }
       throw err;
@@ -94,7 +92,7 @@ export function withAgent<T = Record<string, unknown>>(
     // 4. Deposit output signals
     const deposits = resolveOutput(output, agentResult, signal);
     for (const deposit of deposits) {
-      await ctx.deposit(deposit.type, deposit.payload ?? agentResult, {
+      await ctx.deposit(deposit.type, deposit.payload ?? { ...agentResult }, {
         causedBy: [signal.id],
         tags: deposit.tags,
         ttl: deposit.ttl,
@@ -106,7 +104,7 @@ export function withAgent<T = Record<string, unknown>>(
       await ctx.withdraw(signal.id);
     }
 
-    ctx.log(`Agent completed. Deposited ${deposits.length} signal(s).`);
+    ctx.log(`Agent completed (${agentResult.subtype}). Cost: $${agentResult.costUsd.toFixed(4)}, Duration: ${agentResult.durationMs}ms. Deposited ${deposits.length} signal(s).`);
   };
 }
 
@@ -114,33 +112,62 @@ export function withAgent<T = Record<string, unknown>>(
 // Helpers
 // ----------------------------------------------------------
 
-function buildDefaultSystemPrompt(colonyName: string): string {
+/**
+ * Consumes the SDK's AsyncGenerator, collecting all messages and
+ * extracting the final result from the SDKResultMessage.
+ */
+async function consumeGenerator(
+  generator: AsyncGenerator<any, void>,
+  onMessage?: (message: unknown) => void
+): Promise<AgentResult> {
+  const messages: unknown[] = [];
+  let resultMessage: any = null;
+
+  for await (const message of generator) {
+    messages.push(message);
+
+    // Call observability callback (errors must not crash the agent)
+    if (onMessage) {
+      try { onMessage(message); } catch { /* swallow */ }
+    }
+
+    // Capture the result message when it arrives
+    if (message.type === 'result') {
+      resultMessage = message;
+    }
+  }
+
+  if (!resultMessage) {
+    return {
+      text: '',
+      costUsd: 0,
+      durationMs: 0,
+      usage: { input_tokens: 0, output_tokens: 0 },
+      subtype: 'error_during_execution',
+      messages,
+    };
+  }
+
+  return {
+    text: resultMessage.result ?? resultMessage.errors?.join('\n') ?? '',
+    costUsd: resultMessage.total_cost_usd ?? 0,
+    durationMs: resultMessage.duration_ms ?? 0,
+    usage: {
+      input_tokens: resultMessage.usage?.input_tokens ?? 0,
+      output_tokens: resultMessage.usage?.output_tokens ?? 0,
+    },
+    subtype: resultMessage.subtype ?? 'success',
+    messages,
+  };
+}
+
+export function buildDefaultSystemPrompt(colonyName: string): string {
   return [
     `You are an agent in the "${colonyName}" colony.`,
     'Complete the task described in the prompt.',
     'Be thorough but concise. Focus on the specific task at hand.',
     'If you create or modify files, ensure they compile/pass tests.',
   ].join('\n');
-}
-
-function extractResult(messages: any[]): Record<string, unknown> {
-  // Walk backwards to find the last assistant message with text content
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg.role === 'assistant') {
-      // Handle both string content and content blocks
-      if (typeof msg.content === 'string') {
-        return { text: msg.content, raw: msg };
-      }
-      if (Array.isArray(msg.content)) {
-        const textBlock = msg.content.find((b: any) => b.type === 'text');
-        if (textBlock) {
-          return { text: textBlock.text, raw: msg };
-        }
-      }
-    }
-  }
-  return { text: '', raw: messages };
 }
 
 function resolveOutput<T>(

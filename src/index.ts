@@ -91,6 +91,7 @@ export { assembleContext, withContext } from './providers/context.js';
 export type {
   ActionHandler,
   AgentProviderConfig,
+  AgentResult,
   StructuredOutputConfig,
   BashProviderConfig,
   LLMCallFunction,

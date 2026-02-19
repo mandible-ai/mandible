@@ -33,7 +33,7 @@ export type ActionHandler<T = Record<string, unknown>> = (
 
 /**
  * Config for the Claude agent provider (withAgent).
- * Uses Claude Code SDK for full agentic coding capabilities.
+ * Uses Claude Agent SDK for full agentic coding capabilities.
  */
 export interface AgentProviderConfig<T = Record<string, unknown>> {
   /** Model to use. Defaults to 'claude-sonnet-4-5-20250929'. */
@@ -51,10 +51,21 @@ export interface AgentProviderConfig<T = Record<string, unknown>> {
   systemPrompt?: string;
 
   /**
-   * Tools the agent can use. These are Claude Code SDK tool names
-   * like 'file_edit', 'bash', 'code_review', etc.
+   * Tools the agent is allowed to use. Claude Agent SDK tool names
+   * like 'Read', 'Edit', 'Bash', 'Glob', 'Grep', etc.
+   */
+  allowedTools?: string[];
+
+  /**
+   * @deprecated Use `allowedTools` instead. Kept for backward compatibility.
    */
   tools?: string[];
+
+  /**
+   * Tools the agent is explicitly forbidden from using.
+   * Takes precedence over allowedTools.
+   */
+  disallowedTools?: string[];
 
   /**
    * Working directory for the agent session.
@@ -63,9 +74,36 @@ export interface AgentProviderConfig<T = Record<string, unknown>> {
   workingDirectory?: string | ((signal: Signal<T>) => string);
 
   /**
-   * Max tokens for the agent response.
+   * @deprecated The Claude Agent SDK does not use maxTokens directly.
+   * Use maxTurns or maxBudgetUsd to control agent scope instead.
    */
   maxTokens?: number;
+
+  /** Maximum conversation turns before the agent stops. */
+  maxTurns?: number;
+
+  /** Maximum budget in USD for a single agent invocation. Defaults to 1.0. */
+  maxBudgetUsd?: number;
+
+  /**
+   * Permission mode for the agent session.
+   * - 'bypassPermissions': skip all permission checks (default for colonies)
+   * - 'acceptEdits': auto-accept file edits but prompt for other tools
+   * - 'default': standard permission behavior
+   */
+  permissionMode?: 'bypassPermissions' | 'acceptEdits' | 'default';
+
+  /**
+   * Streaming observability callback — called for each SDK message.
+   * Errors in this callback are caught and do not crash the agent.
+   */
+  onMessage?: (message: unknown) => void;
+
+  /**
+   * Environment variables to pass to the agent process.
+   * Use this to provide ANTHROPIC_API_KEY explicitly.
+   */
+  env?: Record<string, string>;
 
   /**
    * Map the agent's output to signal deposits.
@@ -78,6 +116,24 @@ export interface AgentProviderConfig<T = Record<string, unknown>> {
    * Defaults to true.
    */
   autoWithdraw?: boolean;
+}
+
+/**
+ * Result returned by the Claude Agent SDK after an agent run.
+ */
+export interface AgentResult {
+  /** The final text output from the agent. */
+  text: string;
+  /** Total cost in USD for the agent run. */
+  costUsd: number;
+  /** Wall-clock duration in milliseconds. */
+  durationMs: number;
+  /** Token usage for the run. */
+  usage: { input_tokens: number; output_tokens: number };
+  /** Result subtype: 'success', 'error_max_turns', 'error_during_execution', etc. */
+  subtype: string;
+  /** All messages from the agent conversation (for debugging). */
+  messages: unknown[];
 }
 
 /**
