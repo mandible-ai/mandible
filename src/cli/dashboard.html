@@ -94,7 +94,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
 #graph-svg { width: 100%; height: 100%; }
 .graph-node { cursor: pointer; }
 .graph-node circle { transition: r 0.3s; }
-.graph-node text { font-family: var(--mono); font-size: 10px; fill: var(--text); pointer-events: none; }
+.graph-node text { font-family: var(--mono); font-size: 11px; fill: var(--text); pointer-events: none; }
 .graph-link { stroke: var(--border); stroke-opacity: 0.6; }
 
 /* Environment inspector */
@@ -220,6 +220,25 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
   function typeColor(type) {
     let h = 0; for (let i = 0; i < type.length; i++) h = (h * 37 + type.charCodeAt(i)) >>> 0;
     return PALETTE[h % PALETTE.length];
+  }
+
+  // Concentration-based color ramp: dim slate blue (low) → bright teal-green (high)
+  function concentrationColor(conc) {
+    const h = 220 - conc * 60;
+    const s = 30 + conc * 50;
+    const l = 25 + conc * 35;
+    return `hsl(${h}, ${s}%, ${l}%)`;
+  }
+
+  // Smart node label — shows issue #number + title when available
+  function nodeLabel(d) {
+    const p = d.signal.payload;
+    if (p.number && p.title) {
+      const clean = p.title.replace(/^\[.*?\]\s*/, '');
+      const t = clean.length > 25 ? clean.slice(0, 25) + '...' : clean;
+      return '#' + p.number + ' ' + t;
+    }
+    return payloadPreview(d.signal.payload) || d.type;
   }
 
   // ── WebSocket ──────────────────────────────────────────
@@ -487,13 +506,28 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
     if (!graphInitialized) {
       svg.selectAll('*').remove();
 
-      svg.append('defs').append('marker')
+      const defs = svg.append('defs');
+
+      defs.append('marker')
         .attr('id', 'arrow').attr('viewBox', '0 -5 10 10')
         .attr('refX', 20).attr('refY', 0)
         .attr('markerWidth', 6).attr('markerHeight', 6)
         .attr('orient', 'auto')
         .append('path').attr('d', 'M0,-5L10,0L0,5')
         .attr('fill', '#333355');
+
+      const glowFilter = defs.append('filter')
+        .attr('id', 'glow')
+        .attr('x', '-50%').attr('y', '-50%')
+        .attr('width', '200%').attr('height', '200%');
+      glowFilter.append('feGaussianBlur')
+        .attr('stdDeviation', '4')
+        .attr('result', 'blur');
+      glowFilter.append('feMerge')
+        .selectAll('feMergeNode')
+        .data(['blur', 'SourceGraphic'])
+        .enter().append('feMergeNode')
+        .attr('in', d => d);
 
       linkGroup = svg.append('g').attr('class', 'links');
       nodeGroup = svg.append('g').attr('class', 'nodes');
@@ -531,27 +565,52 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
     // Update node visuals (concentration may have changed)
     node.select('circle')
       .transition().duration(500)
-      .attr('r', d => 6 + d.concentration * 12)
-      .attr('fill', d => typeColor(d.type))
-      .attr('fill-opacity', d => 0.3 + d.concentration * 0.7)
-      .attr('stroke', d => typeColor(d.type))
-      .attr('stroke-width', 1.5);
+      .attr('r', d => 8 + d.concentration * 14)
+      .attr('fill', d => concentrationColor(d.concentration))
+      .attr('fill-opacity', d => 0.4 + d.concentration * 0.6)
+      .attr('stroke', d => concentrationColor(d.concentration))
+      .attr('stroke-opacity', d => 0.5 + d.concentration * 0.5)
+      .attr('stroke-width', d => 1 + d.concentration * 1.5)
+      .attr('filter', d => d.concentration > 0.5 ? 'url(#glow)' : null);
 
     node.select('text')
-      .attr('dx', d => 10 + d.concentration * 12)
-      .text(d => d.type);
+      .attr('dx', d => 14 + d.concentration * 20)
+      .attr('fill', d => d.concentration > 0.3 ? 'var(--text)' : 'var(--text-dim)')
+      .text(d => nodeLabel(d));
 
-    // Update simulation
-    if (simulation) simulation.stop();
-    simulation = d3.forceSimulation(graphNodes)
-      .force('link', d3.forceLink(graphLinks).id(d => d.id).distance(80))
-      .force('charge', d3.forceManyBody().strength(-120))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(d => 8 + d.concentration * 16))
-      .alpha(0.3) // Gentle reheat, not full restart
-      .alphaDecay(0.05);
+    // Detect whether the node set actually changed (not just a poll refresh)
+    const oldIds = new Set(oldNodeMap.keys());
+    const newIds = new Set(newNodes.map(n => n.id));
+    const nodesChanged = oldIds.size !== newIds.size || [...newIds].some(id => !oldIds.has(id));
+
+    // Update or create simulation
+    const pad = 40;
+    if (simulation && !nodesChanged) {
+      // Same nodes — just update data without reheating
+      simulation.nodes(graphNodes);
+      simulation.force('link').links(graphLinks);
+      simulation.force('x').x(width / 2);
+      simulation.force('y').y(height / 2);
+      simulation.force('collision').radius(d => 20 + d.concentration * 24);
+    } else {
+      // Nodes changed — create new simulation
+      if (simulation) simulation.stop();
+      simulation = d3.forceSimulation(graphNodes)
+        .force('link', d3.forceLink(graphLinks).id(d => d.id).distance(120).strength(0.7))
+        .force('charge', d3.forceManyBody().strength(-200))
+        .force('x', d3.forceX(width / 2).strength(0.05))
+        .force('y', d3.forceY(height / 2).strength(0.05))
+        .force('collision', d3.forceCollide().radius(d => 20 + d.concentration * 24))
+        .alpha(0.6)
+        .alphaDecay(0.02);
+    }
 
     simulation.on('tick', () => {
+      // Clamp nodes within viewport bounds
+      for (const d of graphNodes) {
+        d.x = Math.max(pad, Math.min(width - pad, d.x));
+        d.y = Math.max(pad, Math.min(height - pad, d.y));
+      }
       link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
           .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
       node.attr('transform', d => `translate(${d.x},${d.y})`);
@@ -660,6 +719,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
   // ── Helpers ────────────────────────────────────────────
   function payloadPreview(payload) {
     if (!payload || typeof payload !== 'object') return '';
+    // Show #number title for GitHub issues
+    if (payload.number && payload.title) {
+      const clean = payload.title.replace(/^\[.*?\]\s*/, '');
+      const label = '#' + payload.number + ' ' + clean;
+      return label.length > 40 ? label.slice(0, 40) + '...' : label;
+    }
     // Pick the most informative field
     for (const key of ['name', 'title', 'task', 'description', 'text', 'message']) {
       if (typeof payload[key] === 'string') {
