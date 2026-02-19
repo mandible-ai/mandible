@@ -57,6 +57,8 @@ export { SignalValidationError, validateSignalInput } from './core/validation.js
 // Environment adapters
 export { FilesystemEnvironment } from './environments/filesystem/index.js';
 export { DoltEnvironment } from './environments/dolt/index.js';
+export { GitHubEnvironment } from './environments/github/index.js';
+export type { GitHubEnvConfig } from './environments/github/index.js';
 
 // Default policies
 export { DEFAULT_DECAY_POLICY } from './core/types.js';
