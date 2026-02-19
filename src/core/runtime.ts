@@ -73,6 +73,7 @@ export class ColonyRuntime implements IColonyRuntime {
 
   get state(): RuntimeState { return this._state; }
   get activeCount(): number { return this._activeCount; }
+  get concurrency(): number { return this.definition.concurrency; }
   get stats(): RuntimeStats { return { ...this._stats }; }
   get name(): string { return this.definition.name; }
 

@@ -3,9 +3,9 @@
 // mandible CLI — entry point
 // ============================================================
 
-import { resolve } from 'node:path';
-import { existsSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { resolve, dirname } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -48,7 +48,9 @@ function printHelp() {
 
 function printVersion() {
   try {
-    const pkg = require('../../package.json');
+    const __filename = fileURLToPath(import.meta.url);
+    const pkgPath = resolve(dirname(__filename), '..', '..', 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
     console.log(`mandible v${pkg.version}`);
   } catch {
     console.log('mandible v0.1.0');
@@ -82,16 +84,31 @@ async function runDev(devArgs: string[]) {
   console.log(`  config: ${resolved}`);
   console.log(`  dashboard: http://localhost:${port}\n`);
 
-  // Dynamic import the config file (tsx/jiti must be registered for .ts)
+  // Dynamic import the config file
+  // For .ts files, try native import first (works under tsx/ts-node),
+  // then fall back to jiti for compiled JS contexts.
   let config: any;
+  const configUrl = pathToFileURL(resolved).href;
   try {
-    const configUrl = pathToFileURL(resolved).href;
     const mod = await import(configUrl);
     config = mod.default ?? mod;
-  } catch (err: any) {
-    console.error(`Failed to load config: ${err.message}`);
-    console.error(`Make sure tsx is available: npx mandible dev`);
-    process.exit(1);
+  } catch (nativeErr: any) {
+    if (resolved.endsWith('.ts')) {
+      // Native import failed on a .ts file — try jiti as fallback
+      try {
+        const { default: jiti } = await import('jiti');
+        const loader = jiti(resolved, { interopDefault: true });
+        config = loader(resolved);
+      } catch {
+        console.error(`Failed to load TypeScript config: ${resolved}`);
+        console.error(`Run via tsx:   npx tsx src/cli/index.ts dev`);
+        console.error(`Or install jiti: npm install -D jiti`);
+        process.exit(1);
+      }
+    } else {
+      console.error(`Failed to load config: ${nativeErr.message}`);
+      process.exit(1);
+    }
   }
 
   const { startDevServer } = await import('./server.js');

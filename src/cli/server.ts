@@ -75,6 +75,7 @@ export async function startDevServer(
           name: rt.name,
           state: rt.state,
           activeCount: rt.activeCount,
+          concurrency: rt.concurrency,
           stats: rt.stats,
         }));
         sendJson(res, { colonies });
