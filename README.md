@@ -1,5 +1,9 @@
 # Mandible
 
+![CI](https://github.com/mandible-ai/mandible/actions/workflows/ci.yml/badge.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Node](https://img.shields.io/badge/Node-%3E%3D20-brightgreen.svg)
+
 A universal stigmergy framework for autonomous agent coordination.
 
 Instead of wiring agents together with message passing, Mandible agents coordinate by depositing and sensing **signals** in a shared **environment** — the same way ant colonies self-organize through pheromone trails. No orchestrator. No message routing. Complex behavior emerges from simple rules.
@@ -36,7 +40,7 @@ const shaper = colony('shaper')
   .sense('task:ready', { unclaimed: true })
   .do(withAgent({
     systemPrompt: 'You are a code shaper. Given a task, write the implementation.',
-    tools: ['Read', 'Write', 'Bash'],
+    allowedTools: ['Read', 'Write', 'Bash'],
   }))
   .concurrency(2)
   .claim('lease', 30_000)
@@ -47,7 +51,7 @@ const critic = colony('critic')
   .sense('task:shaped', { unclaimed: true })
   .do(withAgent({
     systemPrompt: 'You are a code critic. Review the implementation for correctness and style.',
-    tools: ['Read'],
+    allowedTools: ['Read'],
   }))
   .claim('exclusive')
   .build();
@@ -61,6 +65,42 @@ await criticRuntime.start();
 
 No colony references any other colony. They coordinate entirely through signals in the environment.
 
+### Run with the dashboard
+
+The fastest way to see colonies in action is the CLI:
+
+```bash
+mandible dev examples/repo-maintenance/mandible.config.ts
+```
+
+This starts all colonies and opens the live dashboard at `localhost:4040`. See the [Dashboard](#dashboard) section for details.
+
+A ready-made demo is available:
+
+```bash
+npm run demo:repo-maintenance
+```
+
+## Dashboard
+
+`mandible dev <config>` runs your colonies and opens a live dashboard in the browser.
+
+- Real-time signal flow — watch signals appear, get claimed, and cascade through colonies
+- Colony status cards — running state, concurrency, claim counts, heartbeat health
+- WebSocket streaming — updates push instantly, no polling
+
+```bash
+mandible dev mandible.config.ts              # default: localhost:4040
+mandible dev mandible.config.ts --port 8080  # custom port
+mandible dev mandible.config.ts --no-open    # skip auto-opening browser
+```
+
+*Dashboard GIF coming soon*
+
+## Architecture
+
+![Mandible architecture](docs/mandible-architecture.png)
+
 ## Core concepts
 
 Every concept maps to a biological analogy:
@@ -68,7 +108,7 @@ Every concept maps to a biological analogy:
 | Mandible | Biology | Description |
 |----------|---------|-------------|
 | **Signal** | Pheromone | A typed marker deposited in the environment with a payload, concentration, and TTL. |
-| **Environment** | Substrate | The shared medium agents read from and write to. Filesystem, Dolt, GitHub, Kubernetes. |
+| **Environment** | Substrate | The shared medium agents read from and write to. Filesystem, GitHub, Remote, Dolt. |
 | **Colony** | Ant caste | A group of identical agents with shared sensors, rules, and claim strategy. |
 | **Sensor** | Antennae | How a colony perceives signals. A query pattern like `task:ready` or `review:*`. |
 | **Rule** | Instinct | A stimulus→response mapping: "when I sense X, do Y and deposit Z." |
@@ -101,10 +141,11 @@ colony('name')
   .in(env)                                        // which environment
   .sense('type:pattern', { unclaimed: true })     // what to watch for
   .when(signal => signal.payload.priority > 0)    // optional guard
-  .do(withAgent({ tools: ['Read', 'Write'] }))    // action provider
+  .do(withAgent({ allowedTools: ['Read', 'Write'] }))  // action provider
   .concurrency(3)                                 // max parallel agents
   .claim('lease', 30_000)                         // claim strategy
   .poll(2000)                                     // sensor poll interval (ms)
+  .heartbeat(10_000)                              // periodic alive signals
   .autoWithdraw()                                 // auto-remove processed signals
   .timeout(60_000)                                // action timeout
   .retry(3, 1000)                                 // retry with backoff
@@ -126,11 +167,13 @@ Action providers wrap external capabilities into a standard interface for colony
 
 | Provider | Use case | Backed by |
 |----------|----------|-----------|
-| `withAgent` | Coding agents, complex reasoning | Claude Code SDK |
+| `withAgent` | Coding agents, complex reasoning | Claude Code SDK (live) |
 | `withStructuredOutput` | Classification, review, decisions | Anthropic, OpenAI, Vercel AI SDK |
 | `withBash` | Build commands, test runners, linters | Shell execution |
 
-The `withAgent` provider assembles context by walking signal lineage (caused_by chains), giving the LLM full awareness of the work pipeline state.
+`withAgent` is fully wired to the Claude Code SDK — colonies spawn real agent sessions that read files, write code, and run commands. It supports **AWS Bedrock routing** via the `bedrock` config option for enterprise deployments.
+
+The provider assembles context by walking signal lineage (`caused_by` chains), giving the agent full awareness of the work pipeline state.
 
 ## Signal types
 
@@ -169,6 +212,33 @@ const env = new FilesystemEnvironment({
 });
 ```
 
+### GitHub (implemented)
+
+Issues, pull requests, comments, and labels mapped as signals. Colonies can sense repository activity and deposit responses.
+
+```typescript
+import { GitHubEnvironment } from 'mandible';
+
+const env = new GitHubEnvironment({
+  owner: 'mandible-ai',
+  repo: 'mandible',
+  token: process.env.GITHUB_TOKEN,
+});
+```
+
+### Remote (implemented)
+
+WebSocket-based environment for distributed deployments. Multiple machines share a single signal namespace over the network.
+
+```typescript
+import { RemoteEnvironment } from 'mandible';
+
+const env = new RemoteEnvironment({
+  url: 'ws://coordinator:4041',
+  name: 'distributed',
+});
+```
+
 ### Dolt (stubbed)
 
 [Dolt](https://www.dolthub.com/) is a SQL database with Git-like versioning. Signals become rows, branching enables parallel work, and `dolt_history` provides queryable time travel for the full signal history.
@@ -192,10 +262,49 @@ interface Environment {
 }
 ```
 
+## Patterns
+
+Reusable coordination patterns built on top of the core primitives.
+
+### SignalBridge
+
+Cross-environment signal mirroring with attestation chains. Bridges watch for signals in one environment and mirror them to another, appending a signed attestation to preserve provenance across boundaries.
+
+```typescript
+import { SignalBridge } from 'mandible';
+
+const bridge = new SignalBridge({
+  from: localEnv,
+  to: githubEnv,
+  filter: { type: 'fix:proposed' },
+});
+await bridge.start();
+```
+
+### Sentinel
+
+Trust monitoring colony that watches an environment for signals with invalid or missing provenance. When violations are detected, the sentinel deposits `trust:violation` report signals that other colonies can react to.
+
+```typescript
+import { Sentinel } from 'mandible';
+
+const sentinel = new Sentinel({
+  environment: env,
+  reportType: 'trust:violation',
+});
+await sentinel.start();
+```
+
 ## Project structure
 
 ```
 src/
+  cli/
+    index.ts            CLI entry point — `mandible dev`
+    server.ts           Dashboard HTTP + WebSocket server
+    dashboard.html      Live dashboard UI
+  cloud/
+    index.ts            Cloud client for hosted observability
   core/
     types.ts            Core type system (Signal, Environment, Colony, Trust)
     signal.ts           Signal creation, matching, decay, priority sorting
@@ -205,9 +314,11 @@ src/
     builder.ts          Fluent colony definition DSL
   environments/
     filesystem/         Filesystem adapter (JSON files + atomic claims)
+    github/             GitHub adapter (issues, PRs, comments, labels as signals)
+    remote/             Remote adapter (WebSocket-based distributed environments)
     dolt/               Dolt adapter (stub)
   providers/
-    agent.ts            withAgent — Claude Code SDK
+    agent.ts            withAgent — Claude Code SDK (live)
     structured-output.ts withStructuredOutput — multi-model
     bash.ts             withBash — shell commands
     context.ts          Context assembly from signal lineage
@@ -215,11 +326,20 @@ src/
     bridge.ts           SignalBridge — cross-environment mirroring with attestation
     sentinel.ts         Sentinel — trust monitoring and violation reporting
 
+tests/
+  core/                 Signal, runtime, attestation tests
+  environments/         Filesystem, GitHub, remote adapter tests
+  providers/            Agent, structured output, bash provider tests
+  colonies/             Integration tests for colony workflows
+
 examples/
-  code-pipeline/        Working demo: Shaper → Critic → Keeper pipeline
+  code-pipeline/        Shaper → Critic → Keeper pipeline demo
+  repo-maintenance/     Scout + Fixer repo maintenance demo
 ```
 
-## Example: code pipeline
+## Examples
+
+### Code pipeline
 
 The included demo seeds 5 coding tasks into a filesystem environment. Three colonies self-organize to process them:
 
@@ -230,22 +350,36 @@ The included demo seeds 5 coding tasks into a filesystem environment. Three colo
 No orchestrator. No message broker. No routing logic. The colonies discover work through the environment and coordinate through signals.
 
 ```bash
-node --import tsx examples/code-pipeline/index.ts
+npm run demo
 ```
+
+### Repo maintenance
+
+Scout + Fixer colony pair that maintain a repository. Run it against any repo:
+
+- **Scout** — scans the repository for issues, deposits `issue:detected` signals (one per finding, categorized by severity)
+- **Fixer** — claims `issue:detected` signals, applies fixes, deposits `fix:proposed` or `fix:failed`
+
+```bash
+npm run demo:repo-maintenance
+```
+
+Both colonies are wired to real Claude agents via `withAgent`. The dashboard shows signal flow in real time.
 
 ## Roadmap
 
-- [ ] `mandible dev` — CLI that runs colonies + opens a live dashboard
-- [ ] Real-time dashboard with signal flow visualization, colony stats, lineage graph
-- [ ] `create-mandible` — project scaffolding with starter templates
-- [ ] Wire `withAgent` to Claude Code SDK for real LLM-powered colonies
-- [ ] Comprehensive test suite (vitest, 90%+ coverage on core)
-- [ ] Dolt environment adapter (full implementation)
-- [ ] GitHub environment adapter (issues/PRs/comments as signals)
-- [ ] CloudEvents bridge adapter (interop with CNCF event-driven infra)
-- [ ] Colony scaler (auto-adjust concurrency based on signal backlog)
-- [ ] Trust enforcement (environment-level deposit-time verification)
-- [ ] Hosted observability platform (tracing, telemetry, team workspaces)
+- [x] `mandible dev` CLI + live dashboard
+- [x] `withAgent` wired to Claude Code SDK
+- [x] Test suite (371 tests, 95%+ coverage)
+- [x] GitHub environment adapter
+- [x] Remote environment adapter
+- [ ] `create-mandible` starter template
+- [ ] Dashboard GIF + landing page
+- [ ] Dolt full implementation
+- [ ] CloudEvents bridge adapter
+- [ ] Colony scaler
+- [ ] Trust enforcement
+- [ ] Hosted observability platform
 
 ## License
 
