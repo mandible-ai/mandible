@@ -10,7 +10,7 @@
 // Keeper:  withBash — git merge
 //
 // Prerequisites:
-//   npm install @anthropic-ai/sdk @anthropic-ai/claude-code
+//   npm install @anthropic-ai/sdk @anthropic-ai/claude-agent-sdk
 //   export ANTHROPIC_API_KEY=sk-ant-...
 //
 // Run:

@@ -1,5 +1,5 @@
 // Action providers
-export { withAgent } from './agent.js';
+export { withAgent, buildDefaultSystemPrompt } from './agent.js';
 export { withStructuredOutput } from './structured-output.js';
 export { withBash } from './bash.js';
 
@@ -10,6 +10,7 @@ export { assembleContext, withContext } from './context.js';
 export type {
   ActionHandler,
   AgentProviderConfig,
+  AgentResult,
   StructuredOutputConfig,
   BashProviderConfig,
   LLMCallFunction,
