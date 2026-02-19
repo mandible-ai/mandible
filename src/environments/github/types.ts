@@ -82,4 +82,15 @@ export interface GitHubEnvConfig {
 
   /** GitHub API base URL. Default: "https://api.github.com" */
   apiBase?: string;
+
+  /** Dependency-aware concentration boosting.
+   *  Signals that unblock more downstream work get higher concentration. */
+  dependencyBoost?: {
+    /** Boost for root nodes (no dependencies, has dependents). Default: 0.15 */
+    rootBoost?: number;
+    /** Boost per dependent signal. Default: 0.05 */
+    dependentBoost?: number;
+    /** Maximum total dependency boost. Default: 0.3 */
+    maxBoost?: number;
+  };
 }

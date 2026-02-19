@@ -14,6 +14,7 @@ import {
   defaultPayloadMapper,
   defaultConcentrationMapper,
   defaultDependencyMapper,
+  computeDependencyBoosts,
 } from './mapper.js';
 
 export class GitHubEnvironment implements Environment {
@@ -152,6 +153,19 @@ export class GitHubEnvironment implements Environment {
     // Issues that disappeared from the API (closed externally) are NOT removed.
     // They stop being reinforced and natural decay handles evaporation.
     // This is the stigmergy way: absence of reinforcement = signal fades.
+
+    // Apply dependency-aware concentration boosts
+    const boosts = computeDependencyBoosts(this.signals, {
+      rootBoost: this.config.dependencyBoost?.rootBoost,
+      dependentBoost: this.config.dependencyBoost?.dependentBoost,
+      maxBoost: this.config.dependencyBoost?.maxBoost,
+    });
+    for (const [id, boost] of boosts) {
+      const signal = this.signals.get(id);
+      if (signal) {
+        signal.meta.concentration = Math.min(1.0, signal.meta.concentration + boost);
+      }
+    }
 
     this.lastSyncAt = Date.now();
     return newSignalIds;

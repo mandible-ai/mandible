@@ -467,6 +467,22 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
       return;
     }
 
+    // Adaptive normalization: when the concentration range is wide (>0.3),
+    // raw values already give good visual spread. When values are clustered
+    // (e.g. all between 0.83–0.91), stretch to fill the visual range.
+    // Uses interquartile range to resist outlier distortion.
+    const concValues = state.signals.map(s => s.meta.concentration).sort((a, b) => a - b);
+    const concMin = concValues[0];
+    const concMax = concValues[concValues.length - 1];
+    const concRange = concMax - concMin;
+    function normalizeConc(c) {
+      if (concRange > 0.3) return c; // wide spread — raw values work fine
+      if (concRange < 0.01) return 1; // all identical
+      // Narrow cluster — normalize but keep a floor so lowest isn't invisible
+      const normalized = (c - concMin) / concRange;
+      return 0.15 + normalized * 0.85;
+    }
+
     // Build node map preserving existing positions
     const oldNodeMap = new Map(graphNodes.map(n => [n.id, n]));
     const newNodes = state.signals.map(s => {
@@ -475,6 +491,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
         id: s.id,
         type: s.type,
         concentration: s.meta.concentration,
+        intensity: normalizeConc(s.meta.concentration),
         deposited_by: s.meta.deposited_by,
         signal: s,
         // Preserve position from previous render
@@ -562,19 +579,20 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
 
     const node = nodeEnter.merge(nodeSel);
 
-    // Update node visuals (concentration may have changed)
+    // Update node visuals — uses normalized intensity for size/glow,
+    // raw concentration for color (reflects actual signal strength)
     node.select('circle')
       .transition().duration(500)
-      .attr('r', d => 8 + d.concentration * 14)
+      .attr('r', d => 10 + d.intensity * 18)
       .attr('fill', d => concentrationColor(d.concentration))
-      .attr('fill-opacity', d => 0.4 + d.concentration * 0.6)
+      .attr('fill-opacity', d => 0.4 + d.intensity * 0.6)
       .attr('stroke', d => concentrationColor(d.concentration))
-      .attr('stroke-opacity', d => 0.5 + d.concentration * 0.5)
-      .attr('stroke-width', d => 1 + d.concentration * 1.5)
-      .attr('filter', d => d.concentration > 0.5 ? 'url(#glow)' : null);
+      .attr('stroke-opacity', d => 0.5 + d.intensity * 0.5)
+      .attr('stroke-width', d => 1 + d.intensity * 2)
+      .attr('filter', d => d.intensity > 0.3 ? 'url(#glow)' : null);
 
     node.select('text')
-      .attr('dx', d => 14 + d.concentration * 20)
+      .attr('dx', d => 16 + d.intensity * 20)
       .attr('fill', d => d.concentration > 0.3 ? 'var(--text)' : 'var(--text-dim)')
       .text(d => nodeLabel(d));
 
@@ -591,7 +609,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
       simulation.force('link').links(graphLinks);
       simulation.force('x').x(width / 2);
       simulation.force('y').y(height / 2);
-      simulation.force('collision').radius(d => 20 + d.concentration * 24);
+      simulation.force('collision').radius(d => 22 + d.intensity * 28);
     } else {
       // Nodes changed — create new simulation
       if (simulation) simulation.stop();
@@ -600,7 +618,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
         .force('charge', d3.forceManyBody().strength(-200))
         .force('x', d3.forceX(width / 2).strength(0.05))
         .force('y', d3.forceY(height / 2).strength(0.05))
-        .force('collision', d3.forceCollide().radius(d => 20 + d.concentration * 24))
+        .force('collision', d3.forceCollide().radius(d => 22 + d.intensity * 28))
         .alpha(0.6)
         .alphaDecay(0.02);
     }

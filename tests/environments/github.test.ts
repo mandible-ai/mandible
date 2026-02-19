@@ -12,6 +12,7 @@ import {
   computeFreshness,
   parseGolemBody,
   parseDependencyIds,
+  computeDependencyBoosts,
 } from '../../src/environments/github/mapper.js';
 import type { GitHubIssue, GitHubEnvConfig } from '../../src/environments/github/types.js';
 import type { Signal } from '../../src/core/types.js';
@@ -1250,5 +1251,211 @@ describe('GitHubEnvironment — pagination', () => {
 
     expect(signals).toHaveLength(2);
     expect(requestCount).toBe(2);
+  });
+});
+
+// ============================================================
+// Dependency Boost Tests
+// ============================================================
+
+function makeSignal(id: string, concentration: number, causedBy?: string[]): Signal {
+  const signal: Signal = {
+    id,
+    type: 'issue:open',
+    payload: {},
+    meta: {
+      deposited_at: Date.now(),
+      deposited_by: 'github',
+      concentration,
+    },
+  };
+  if (causedBy && causedBy.length > 0) {
+    signal.meta.caused_by = causedBy;
+  }
+  return signal;
+}
+
+describe('computeDependencyBoosts', () => {
+  it('boosts root node (no deps, has dependents) with rootBoost + dependentBoost', () => {
+    // #1 is root, #2 depends on #1
+    const signals = new Map<string, Signal>();
+    signals.set('gh:o/r#1', makeSignal('gh:o/r#1', 0.5));
+    signals.set('gh:o/r#2', makeSignal('gh:o/r#2', 0.5, ['gh:o/r#1']));
+
+    const boosts = computeDependencyBoosts(signals);
+
+    expect(boosts.get('gh:o/r#1')).toBeCloseTo(0.20, 2); // 0.15 root + 0.05 * 1 dep
+    expect(boosts.has('gh:o/r#2')).toBe(false); // leaf — no boost
+  });
+
+  it('boosts mid-graph node (has deps AND dependents) with only dependentBoost', () => {
+    // #1 root, #2 mid (depends on #1, #3 depends on #2), #3 leaf
+    const signals = new Map<string, Signal>();
+    signals.set('gh:o/r#1', makeSignal('gh:o/r#1', 0.5));
+    signals.set('gh:o/r#2', makeSignal('gh:o/r#2', 0.5, ['gh:o/r#1']));
+    signals.set('gh:o/r#3', makeSignal('gh:o/r#3', 0.5, ['gh:o/r#2']));
+
+    const boosts = computeDependencyBoosts(signals);
+
+    // #1: root + 1 dependent = 0.15 + 0.05 = 0.20
+    expect(boosts.get('gh:o/r#1')).toBeCloseTo(0.20, 2);
+    // #2: mid-graph, 1 dependent, no root boost = 0.05
+    expect(boosts.get('gh:o/r#2')).toBeCloseTo(0.05, 2);
+    // #3: leaf — no boost
+    expect(boosts.has('gh:o/r#3')).toBe(false);
+  });
+
+  it('gives no boost to leaf nodes (has deps, no dependents)', () => {
+    const signals = new Map<string, Signal>();
+    signals.set('gh:o/r#1', makeSignal('gh:o/r#1', 0.5));
+    signals.set('gh:o/r#2', makeSignal('gh:o/r#2', 0.5, ['gh:o/r#1']));
+
+    const boosts = computeDependencyBoosts(signals);
+
+    expect(boosts.has('gh:o/r#2')).toBe(false);
+  });
+
+  it('gives no boost to isolated nodes (no deps, no dependents)', () => {
+    const signals = new Map<string, Signal>();
+    signals.set('gh:o/r#1', makeSignal('gh:o/r#1', 0.5));
+
+    const boosts = computeDependencyBoosts(signals);
+
+    expect(boosts.size).toBe(0);
+  });
+
+  it('caps boost at maxBoost', () => {
+    // Root with 10 dependents: 0.15 + 10 * 0.05 = 0.65, should cap at 0.3
+    const signals = new Map<string, Signal>();
+    signals.set('gh:o/r#1', makeSignal('gh:o/r#1', 0.5));
+    for (let i = 2; i <= 11; i++) {
+      signals.set(`gh:o/r#${i}`, makeSignal(`gh:o/r#${i}`, 0.5, ['gh:o/r#1']));
+    }
+
+    const boosts = computeDependencyBoosts(signals);
+
+    expect(boosts.get('gh:o/r#1')).toBe(0.3); // capped
+  });
+
+  it('clamps resulting concentration to 1.0 when applied', () => {
+    // Signal already at 0.9, boost of 0.2 should not exceed 1.0
+    const signals = new Map<string, Signal>();
+    signals.set('gh:o/r#1', makeSignal('gh:o/r#1', 0.9));
+    signals.set('gh:o/r#2', makeSignal('gh:o/r#2', 0.5, ['gh:o/r#1']));
+
+    const boosts = computeDependencyBoosts(signals);
+    const boost = boosts.get('gh:o/r#1')!;
+    const clamped = Math.min(1.0, 0.9 + boost);
+
+    expect(clamped).toBe(1.0);
+  });
+
+  it('uses custom config overrides', () => {
+    const signals = new Map<string, Signal>();
+    signals.set('gh:o/r#1', makeSignal('gh:o/r#1', 0.5));
+    signals.set('gh:o/r#2', makeSignal('gh:o/r#2', 0.5, ['gh:o/r#1']));
+
+    const boosts = computeDependencyBoosts(signals, {
+      rootBoost: 0.10,
+      dependentBoost: 0.08,
+      maxBoost: 0.5,
+    });
+
+    expect(boosts.get('gh:o/r#1')).toBeCloseTo(0.18, 2); // 0.10 + 0.08 * 1
+  });
+
+  it('returns empty map for empty signal map', () => {
+    const boosts = computeDependencyBoosts(new Map());
+    expect(boosts.size).toBe(0);
+  });
+
+  it('handles multiple dependents correctly', () => {
+    // #1 is root, #2, #3, #4, #5, #6 all depend on #1
+    const signals = new Map<string, Signal>();
+    signals.set('gh:o/r#1', makeSignal('gh:o/r#1', 0.5));
+    for (let i = 2; i <= 6; i++) {
+      signals.set(`gh:o/r#${i}`, makeSignal(`gh:o/r#${i}`, 0.5, ['gh:o/r#1']));
+    }
+
+    const boosts = computeDependencyBoosts(signals);
+
+    // root: 0.15 + 5 * 0.05 = 0.40, capped to 0.3
+    expect(boosts.get('gh:o/r#1')).toBe(0.3);
+  });
+});
+
+describe('GitHubEnvironment — dependency boost integration', () => {
+  it('boosts root signal concentration after sync', async () => {
+    // Issue #1 is root (no deps), issues #2 and #3 depend on #1
+    const golemBody = (deps: string) =>
+      `## Description\nTest\n\n## Dependencies\n${deps}`;
+
+    setMockIssues([
+      makeIssue({
+        number: 1,
+        title: 'Root issue',
+        labels: [{ name: 'golem' }],
+        body: golemBody(''),
+      }),
+      makeIssue({
+        number: 2,
+        title: 'Child A',
+        labels: [{ name: 'golem' }],
+        body: golemBody('- [ ] bd-daaa.1'),
+      }),
+      makeIssue({
+        number: 3,
+        title: 'Child B',
+        labels: [{ name: 'golem' }],
+        body: golemBody('- [ ] bd-daaa.1'),
+      }),
+    ]);
+
+    const env = createEnv();
+    await env.sync();
+    const signals = await env.snapshot();
+
+    const root = signals.find(s => s.id === 'gh:test/repo#1')!;
+    const childA = signals.find(s => s.id === 'gh:test/repo#2')!;
+    const childB = signals.find(s => s.id === 'gh:test/repo#3')!;
+
+    // Root should have higher concentration than children
+    expect(root.meta.concentration).toBeGreaterThan(childA.meta.concentration);
+    expect(root.meta.concentration).toBeGreaterThan(childB.meta.concentration);
+  });
+
+  it('respects custom dependencyBoost config', async () => {
+    const golemBody = (deps: string) =>
+      `## Description\nTest\n\n## Dependencies\n${deps}`;
+
+    setMockIssues([
+      makeIssue({
+        number: 1,
+        title: 'Root',
+        labels: [{ name: 'golem' }],
+        body: golemBody(''),
+      }),
+      makeIssue({
+        number: 2,
+        title: 'Child',
+        labels: [{ name: 'golem' }],
+        body: golemBody('- [ ] bd-daaa.1'),
+      }),
+    ]);
+
+    const envDefault = createEnv();
+    await envDefault.sync();
+    const defaultSignals = await envDefault.snapshot();
+    const defaultRoot = defaultSignals.find(s => s.id === 'gh:test/repo#1')!;
+
+    const envCustom = createEnv({
+      dependencyBoost: { rootBoost: 0.0, dependentBoost: 0.0 },
+    });
+    await envCustom.sync();
+    const customSignals = await envCustom.snapshot();
+    const customRoot = customSignals.find(s => s.id === 'gh:test/repo#1')!;
+
+    // With zero boosts, root should have lower (or equal) concentration
+    expect(customRoot.meta.concentration).toBeLessThanOrEqual(defaultRoot.meta.concentration);
   });
 });
