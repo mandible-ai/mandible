@@ -235,6 +235,8 @@ import { RemoteEnvironment } from 'mandible';
 
 const env = new RemoteEnvironment({
   url: 'ws://coordinator:4041',
+  apiKey: process.env.MANDIBLE_API_KEY,
+  project: 'my-project',
   name: 'distributed',
 });
 ```
@@ -271,12 +273,14 @@ Reusable coordination patterns built on top of the core primitives.
 Cross-environment signal mirroring with attestation chains. Bridges watch for signals in one environment and mirror them to another, appending a signed attestation to preserve provenance across boundaries.
 
 ```typescript
-import { SignalBridge } from 'mandible';
+import { createBridge } from 'mandible';
 
-const bridge = new SignalBridge({
-  from: localEnv,
-  to: githubEnv,
-  filter: { type: 'fix:proposed' },
+const bridge = createBridge({
+  name: 'local-to-github',
+  identity: bridgeIdentity,
+  source: localEnv,
+  target: githubEnv,
+  signalTypes: ['fix:proposed'],
 });
 await bridge.start();
 ```
@@ -286,11 +290,12 @@ await bridge.start();
 Trust monitoring colony that watches an environment for signals with invalid or missing provenance. When violations are detected, the sentinel deposits `trust:violation` report signals that other colonies can react to.
 
 ```typescript
-import { Sentinel } from 'mandible';
+import { createSentinel } from 'mandible';
 
-const sentinel = new Sentinel({
+const sentinel = createSentinel({
+  name: 'trust-guard',
   environment: env,
-  reportType: 'trust:violation',
+  policy: { name: 'strict', defaultTrust: 'unverified', minimumTrust: 'verified' },
 });
 await sentinel.start();
 ```
