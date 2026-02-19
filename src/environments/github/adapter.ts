@@ -154,16 +154,20 @@ export class GitHubEnvironment implements Environment {
     // They stop being reinforced and natural decay handles evaporation.
     // This is the stigmergy way: absence of reinforcement = signal fades.
 
-    // Apply dependency-aware concentration boosts
+    // Apply dependency-aware concentration adjustments (boosts and penalties)
     const boosts = computeDependencyBoosts(this.signals, {
       rootBoost: this.config.dependencyBoost?.rootBoost,
       dependentBoost: this.config.dependencyBoost?.dependentBoost,
       maxBoost: this.config.dependencyBoost?.maxBoost,
+      leafPenalty: this.config.dependencyBoost?.leafPenalty,
     });
-    for (const [id, boost] of boosts) {
+    for (const [id, adjustment] of boosts) {
       const signal = this.signals.get(id);
       if (signal) {
-        signal.meta.concentration = Math.min(1.0, signal.meta.concentration + boost);
+        signal.meta.concentration = Math.max(
+          this.concentrationFloor,
+          Math.min(1.0, signal.meta.concentration + adjustment)
+        );
       }
     }
 

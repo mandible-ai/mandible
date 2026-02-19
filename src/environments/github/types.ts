@@ -92,5 +92,7 @@ export interface GitHubEnvConfig {
     dependentBoost?: number;
     /** Maximum total dependency boost. Default: 0.3 */
     maxBoost?: number;
+    /** Penalty for leaf nodes (has dependencies, nothing depends on them). Default: 0.15 */
+    leafPenalty?: number;
   };
 }

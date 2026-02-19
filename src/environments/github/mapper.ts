@@ -244,20 +244,21 @@ export function defaultConcentrationMapper(
 // ----------------------------------------------------------
 
 /**
- * Compute concentration boosts based on the dependency graph.
+ * Compute concentration adjustments based on the dependency graph.
  * Signals that unblock more downstream work get higher concentration.
+ * Leaf nodes (depend on others, nothing depends on them) get penalized.
  *
- * - Root node boost: signal has no caused_by AND other signals depend on it
- * - Dependent boost: per-dependent signal that lists this signal in caused_by
- * - Boosts are capped at maxBoost and do NOT mutate the input signals
+ * Returns positive values (boosts) and negative values (penalties).
+ * Does NOT mutate the input signals.
  */
 export function computeDependencyBoosts(
   signals: Map<string, Signal>,
-  options?: { rootBoost?: number; dependentBoost?: number; maxBoost?: number }
+  options?: { rootBoost?: number; dependentBoost?: number; maxBoost?: number; leafPenalty?: number }
 ): Map<string, number> {
   const rootBoost = options?.rootBoost ?? 0.15;
   const dependentBoost = options?.dependentBoost ?? 0.05;
   const maxBoost = options?.maxBoost ?? 0.3;
+  const leafPenalty = options?.leafPenalty ?? 0.15;
 
   // Build reverse-dep map: signalId → count of signals that depend on it
   const dependentCount = new Map<string, number>();
@@ -275,7 +276,13 @@ export function computeDependencyBoosts(
     const hasDependencies = (signal.meta.caused_by?.length ?? 0) > 0;
     const numDependents = dependentCount.get(id) ?? 0;
 
-    if (numDependents === 0) continue; // leaf or isolated — no boost
+    if (hasDependencies && numDependents === 0) {
+      // Leaf node — has deps, nothing depends on it → penalize
+      if (leafPenalty > 0) boosts.set(id, -leafPenalty);
+      continue;
+    }
+
+    if (numDependents === 0) continue; // isolated — no adjustment
 
     let boost = Math.min(maxBoost, numDependents * dependentBoost);
 
