@@ -44,6 +44,11 @@ export {
 
 // Colony DSL
 export { colony } from './dsl/builder.js';
+export { mandible, pipeline } from './dsl/mandible.js';
+
+// Deployment
+export { isDeployable } from './core/types.js';
+export type { Deployable, Deployment, DeployOptions } from './core/types.js';
 
 // Runtime
 export { ColonyRuntime, createRuntime } from './core/runtime.js';

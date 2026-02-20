@@ -35,6 +35,11 @@
       "types": "./dist/src/environments/remote/index.d.ts",
       "import": "./dist/src/environments/remote/index.js",
       "default": "./dist/src/environments/remote/index.js"
+    },
+    "./cli/server": {
+      "types": "./dist/src/cli/server.d.ts",
+      "import": "./dist/src/cli/server.js",
+      "default": "./dist/src/cli/server.js"
     }
   },
   "bin": {

@@ -27,43 +27,64 @@ Stigmergy sidesteps all of that. The environment carries the state. Agents are s
 ## Quick start
 
 ```bash
-npm install mandible
+npm install @mandible-ai/mandible
 ```
 
 ```typescript
-import { colony, createRuntime, FilesystemEnvironment, withClaudeCode } from 'mandible';
+import { mandible, FilesystemEnvironment } from '@mandible-ai/mandible';
 
 const env = new FilesystemEnvironment({ root: './.mandible/signals' });
 
-const shaper = colony('shaper')
-  .in(env)
-  .sense('task:ready', { unclaimed: true })
-  .do(withClaudeCode({
-    systemPrompt: 'You are a code shaper. Given a task, write the implementation.',
-    allowedTools: ['Read', 'Write', 'Bash'],
-  }))
-  .concurrency(2)
-  .claim('lease', 30_000)
-  .build();
-
-const critic = colony('critic')
-  .in(env)
-  .sense('task:shaped', { unclaimed: true })
-  .do(withClaudeCode({
-    systemPrompt: 'You are a code critic. Review the implementation for correctness and style.',
-    allowedTools: ['Read'],
-  }))
-  .claim('exclusive')
-  .build();
-
-// Start them — they self-organize from here
-const shaperRuntime = createRuntime(shaper);
-const criticRuntime = createRuntime(critic);
-await shaperRuntime.start();
-await criticRuntime.start();
+await mandible('code-review')
+  .environment(env)
+  .colony('shaper', c => c
+    .sense('task:ready', { unclaimed: true })
+    .do('shape-code', async (signal, ctx) => {
+      const result = await shapeCode(signal.payload);
+      await ctx.deposit('artifact:shaped', result, { causedBy: [signal.id] });
+      await ctx.withdraw(signal.id);
+    })
+    .concurrency(2)
+    .claim('lease', 30_000)
+  )
+  .colony('critic', c => c
+    .sense('artifact:shaped', { unclaimed: true })
+    .do('review-code', async (signal, ctx) => {
+      const review = await reviewCode(signal.payload);
+      await ctx.deposit('review:approved', review, { causedBy: [signal.id] });
+      await ctx.withdraw(signal.id);
+    })
+    .claim('exclusive')
+  )
+  .deploy();
 ```
 
-No colony references any other colony. They coordinate entirely through signals in the environment.
+No colony references any other colony. They coordinate entirely through signals in the environment. `deploy()` starts the runtimes and opens the live dashboard.
+
+### Cloud deployment
+
+For production workloads, deploy colonies to isolated Edera zones via [Mandible Cloud](https://mandible.dev):
+
+```typescript
+import { mandible } from '@mandible-ai/mandible';
+import { CloudEnvironment } from '@mandible-ai/cloud';
+
+const env = new CloudEnvironment({
+  apiKey: process.env.MANDIBLE_API_KEY,
+  project: 'code-review',
+});
+
+const deployment = await mandible('code-review')
+  .environment(env)
+  .colony('shaper', c => c.sense('task:ready').do('shape', shapeHandler))
+  .colony('critic', c => c.sense('artifact:shaped').do('review', reviewHandler))
+  .deploy();
+
+// Later:
+await deployment.teardown();
+```
+
+Same DSL, different environment. The environment decides what "deploy" means.
 
 ### Run with the dashboard
 
@@ -134,7 +155,27 @@ sense → match rules → claim → execute action → deposit → (others sense
 
 Other colonies sense those deposited signals and the cycle continues. Complex workflows emerge from simple local rules.
 
-## Colony DSL
+## Mandible DSL
+
+The `mandible()` function is the top-level entry point for defining and deploying multi-colony systems:
+
+```typescript
+const deployment = await mandible('pipeline-name')
+  .environment(env)                               // where colonies operate
+  .colony('name', c => c                          // define a colony inline
+    .sense('type:pattern', { unclaimed: true })   // what to watch for
+    .do('action-name', handler)                   // what to do
+    .concurrency(3)                               // max parallel agents
+    .claim('lease', 30_000)                       // claim strategy
+  )
+  .deploy();                                      // start everything
+```
+
+`deploy()` delegates to the environment — `FilesystemEnvironment` starts local runtimes + dashboard, `CloudEnvironment` launches Edera zones. The returned `Deployment` handle provides `teardown()` and `dashboard()` methods.
+
+### Colony builder
+
+For lower-level control, use the `colony()` builder directly:
 
 ```typescript
 colony('name')
@@ -204,7 +245,7 @@ Any shared substrate that supports observe/deposit/withdraw/claim/watch can be a
 Signals are JSON files. Claims use atomic file operations. History lives in a `withdrawn/` directory.
 
 ```typescript
-import { FilesystemEnvironment } from 'mandible';
+import { FilesystemEnvironment } from '@mandible-ai/mandible';
 
 const env = new FilesystemEnvironment({
   root: './.mandible/signals',
@@ -217,7 +258,7 @@ const env = new FilesystemEnvironment({
 Issues, pull requests, comments, and labels mapped as signals. Colonies can sense repository activity and deposit responses.
 
 ```typescript
-import { GitHubEnvironment } from 'mandible';
+import { GitHubEnvironment } from '@mandible-ai/mandible';
 
 const env = new GitHubEnvironment({
   owner: 'mandible-ai',
@@ -231,7 +272,7 @@ const env = new GitHubEnvironment({
 WebSocket-based environment for distributed deployments. Multiple machines share a single signal namespace over the network.
 
 ```typescript
-import { RemoteEnvironment } from 'mandible';
+import { RemoteEnvironment } from '@mandible-ai/mandible';
 
 const env = new RemoteEnvironment({
   url: 'ws://coordinator:4041',
@@ -264,6 +305,17 @@ interface Environment {
 }
 ```
 
+To support `mandible().deploy()`, also implement the `Deployable` interface:
+
+```typescript
+interface Deployable {
+  deploy(colonies: ColonyDefinition[], options?: DeployOptions): Promise<Deployment>;
+  teardown(): Promise<void>;
+}
+```
+
+The `Deployment` handle returned by `deploy()` provides `teardown()` to stop all colonies and `dashboard()` to open the live observability UI. Use `isDeployable(env)` to check if an environment supports deployment.
+
 ## Patterns
 
 Reusable coordination patterns built on top of the core primitives.
@@ -273,7 +325,7 @@ Reusable coordination patterns built on top of the core primitives.
 Cross-environment signal mirroring with attestation chains. Bridges watch for signals in one environment and mirror them to another, appending a signed attestation to preserve provenance across boundaries.
 
 ```typescript
-import { createBridge } from 'mandible';
+import { createBridge } from '@mandible-ai/mandible';
 
 const bridge = createBridge({
   name: 'local-to-github',
@@ -290,7 +342,7 @@ await bridge.start();
 Trust monitoring colony that watches an environment for signals with invalid or missing provenance. When violations are detected, the sentinel deposits `trust:violation` report signals that other colonies can react to.
 
 ```typescript
-import { createSentinel } from 'mandible';
+import { createSentinel } from '@mandible-ai/mandible';
 
 const sentinel = createSentinel({
   name: 'trust-guard',
@@ -317,6 +369,7 @@ src/
     attestation.ts      Ed25519 signing & verification (@noble/ed25519)
   dsl/
     builder.ts          Fluent colony definition DSL
+    pipeline.ts         mandible() — multi-colony orchestration + deploy
   environments/
     filesystem/         Filesystem adapter (JSON files + atomic claims)
     github/             GitHub adapter (issues, PRs, comments, labels as signals)
@@ -375,9 +428,12 @@ Both colonies are wired to real Claude agents via `withClaudeCode`. The dashboar
 
 - [x] `mandible dev` CLI + live dashboard
 - [x] `withClaudeCode` wired to Claude Code SDK
-- [x] Test suite (371 tests, 95%+ coverage)
+- [x] Test suite (378 tests, 95%+ coverage)
 - [x] GitHub environment adapter
 - [x] Remote environment adapter
+- [x] `mandible()` DSL with environment-based deployment
+- [x] `Deployable` interface for environment-driven deploy/teardown
+- [ ] `@mandible-ai/cloud` — deploy to Edera zones via Mandible Cloud
 - [ ] `create-mandible` starter template
 - [ ] Dashboard GIF + landing page
 - [ ] Dolt full implementation
