@@ -1,5 +1,5 @@
 // Action providers
-export { withAgent, buildDefaultSystemPrompt } from './agent.js';
+export { withClaudeCode, buildDefaultSystemPrompt } from './claude-code.js';
 export { withStructuredOutput } from './structured-output.js';
 export { withBash } from './bash.js';
 
@@ -9,7 +9,7 @@ export { assembleContext, withContext } from './context.js';
 // Types
 export type {
   ActionHandler,
-  AgentProviderConfig,
+  ClaudeCodeConfig,
   AgentResult,
   StructuredOutputConfig,
   BashProviderConfig,

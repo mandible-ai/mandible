@@ -1,11 +1,11 @@
-// PURPOSE: withAgent — Claude Agent SDK provider for full agentic colony actions.
-// Wraps the Claude Agent SDK AsyncGenerator to give colonies coding capabilities.
+// PURPOSE: withClaudeCode — Claude Code SDK provider for full agentic colony actions.
+// Wraps the Claude Code SDK AsyncGenerator to give colonies coding capabilities.
 
 import type { Signal, ActionContext } from '../core/types.js';
-import type { AgentProviderConfig, AgentResult, ActionHandler, SignalDeposit, BedrockConfig } from './types.js';
+import type { ClaudeCodeConfig, AgentResult, ActionHandler, SignalDeposit, BedrockConfig } from './types.js';
 
 /**
- * Creates an action handler powered by the Claude Agent SDK.
+ * Creates an action handler powered by the Claude Code SDK.
  *
  * The SDK must be installed separately:
  *   npm install @anthropic-ai/claude-agent-sdk
@@ -18,8 +18,8 @@ import type { AgentProviderConfig, AgentResult, ActionHandler, SignalDeposit, Be
  * 5. Maps the agent's output to signal deposits
  * 6. Optionally withdraws the triggering signal
  */
-export function withAgent<T = Record<string, unknown>>(
-  config: AgentProviderConfig<T>
+export function withClaudeCode<T = Record<string, unknown>>(
+  config: ClaudeCodeConfig<T>
 ): ActionHandler<T> {
   const {
     model = 'claude-sonnet-4-5-20250929',
@@ -89,7 +89,7 @@ export function withAgent<T = Record<string, unknown>>(
     } catch (err: any) {
       if (err.code === 'ERR_MODULE_NOT_FOUND' || err.code === 'MODULE_NOT_FOUND') {
         throw new Error(
-          'withAgent requires @anthropic-ai/claude-agent-sdk. Install it:\n' +
+          'withClaudeCode requires @anthropic-ai/claude-agent-sdk. Install it:\n' +
           '  npm install @anthropic-ai/claude-agent-sdk'
         );
       }
@@ -207,7 +207,7 @@ export function buildDefaultSystemPrompt(colonyName: string): string {
 }
 
 function resolveOutput<T>(
-  output: AgentProviderConfig<T>['output'],
+  output: ClaudeCodeConfig<T>['output'],
   result: any,
   signal: Signal<T>
 ): SignalDeposit[] {

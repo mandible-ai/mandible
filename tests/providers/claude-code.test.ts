@@ -1,4 +1,4 @@
-// PURPOSE: Tests for the withAgent provider (Claude Agent SDK integration)
+// PURPOSE: Tests for the withClaudeCode provider (Claude Code SDK integration)
 // PURPOSE: Covers SDK consumption, prompt resolution, options passing, output mapping, error handling
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -81,7 +81,7 @@ function makeContext(): ActionContext & {
 
 // ── Tests ────────────────────────────────────────────────────
 
-describe('withAgent', () => {
+describe('withClaudeCode', () => {
   let mockQuery: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -94,9 +94,9 @@ describe('withAgent', () => {
     }));
   });
 
-  async function loadWithAgent() {
-    const mod = await import('../../src/providers/agent.js');
-    return mod.withAgent;
+  async function loadWithClaudeCode() {
+    const mod = await import('../../src/providers/claude-code.js');
+    return mod.withClaudeCode;
   }
 
   it('consumes the AsyncGenerator and deposits the result', async () => {
@@ -107,8 +107,8 @@ describe('withAgent', () => {
       resultMsg,
     ]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'Do the task',
       output: { type: 'task:completed' },
     });
@@ -140,8 +140,8 @@ describe('withAgent', () => {
   it('resolves prompt from a function', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: (signal) => `Implement: ${(signal.payload as any).name}`,
       output: { type: 'done' },
     });
@@ -154,8 +154,8 @@ describe('withAgent', () => {
   it('resolves async prompt function', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: async (signal) => `Async: ${(signal.payload as any).name}`,
       output: { type: 'done' },
     });
@@ -168,8 +168,8 @@ describe('withAgent', () => {
   it('passes allowedTools and disallowedTools to SDK', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       allowedTools: ['Read', 'Glob', 'Grep'],
       disallowedTools: ['Edit', 'Write'],
@@ -186,8 +186,8 @@ describe('withAgent', () => {
   it('deprecated tools field works as alias for allowedTools', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       tools: ['Bash', 'Read'],
       output: { type: 'done' },
@@ -202,8 +202,8 @@ describe('withAgent', () => {
   it('allowedTools takes precedence over deprecated tools', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       allowedTools: ['Glob'],
       tools: ['Bash', 'Read'],
@@ -225,8 +225,8 @@ describe('withAgent', () => {
     mockQuery.mockReturnValue(createMockGenerator(messages));
 
     const received: unknown[] = [];
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       onMessage: (msg) => received.push(msg),
       output: { type: 'done' },
@@ -243,8 +243,8 @@ describe('withAgent', () => {
   it('onMessage callback errors do not crash the agent', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       onMessage: () => { throw new Error('callback boom'); },
       output: { type: 'done' },
@@ -259,8 +259,8 @@ describe('withAgent', () => {
       makeResultMessage({ result: JSON.stringify({ issues: ['a', 'b'] }) }),
     ]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'scan',
       output: (result: AgentResult) => {
         const parsed = JSON.parse(result.text);
@@ -284,8 +284,8 @@ describe('withAgent', () => {
   it('deposits default {type}:completed when no output mapping', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({ prompt: 'test' });
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({ prompt: 'test' });
 
     const ctx = makeContext();
     await handler(makeSignal(), ctx);
@@ -297,8 +297,8 @@ describe('withAgent', () => {
   it('skips withdrawal when autoWithdraw is false', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       autoWithdraw: false,
       output: { type: 'done' },
@@ -319,11 +319,11 @@ describe('withAgent', () => {
       throw err;
     });
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({ prompt: 'test', output: { type: 'done' } });
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({ prompt: 'test', output: { type: 'done' } });
 
     await expect(handler(makeSignal(), makeContext())).rejects.toThrow(
-      'withAgent requires @anthropic-ai/claude-agent-sdk'
+      'withClaudeCode requires @anthropic-ai/claude-agent-sdk'
     );
   });
 
@@ -334,19 +334,19 @@ describe('withAgent', () => {
       throw err;
     });
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({ prompt: 'test', output: { type: 'done' } });
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({ prompt: 'test', output: { type: 'done' } });
 
     await expect(handler(makeSignal(), makeContext())).rejects.toThrow(
-      'withAgent requires @anthropic-ai/claude-agent-sdk'
+      'withClaudeCode requires @anthropic-ai/claude-agent-sdk'
     );
   });
 
   it('passes custom model, maxTurns, env, and working directory', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       model: 'claude-opus-4-6',
       maxTurns: 50,
@@ -369,8 +369,8 @@ describe('withAgent', () => {
   it('resolves workingDirectory from a function', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       workingDirectory: (signal) => `/workspace/${(signal.payload as any).name}`,
       output: { type: 'done' },
@@ -384,8 +384,8 @@ describe('withAgent', () => {
   it('passes custom systemPrompt to SDK', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       systemPrompt: 'You are a scout agent.',
       output: { type: 'done' },
@@ -399,8 +399,8 @@ describe('withAgent', () => {
   it('uses default system prompt when none provided', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({ prompt: 'test', output: { type: 'done' } });
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({ prompt: 'test', output: { type: 'done' } });
 
     await handler(makeSignal(), makeContext());
 
@@ -414,8 +414,8 @@ describe('withAgent', () => {
       { type: 'system', subtype: 'init' },
     ]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({ prompt: 'test', output: { type: 'done' } });
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({ prompt: 'test', output: { type: 'done' } });
 
     const ctx = makeContext();
     await handler(makeSignal(), ctx);
@@ -435,8 +435,8 @@ describe('withAgent', () => {
       }),
     ]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({ prompt: 'test', output: { type: 'done' } });
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({ prompt: 'test', output: { type: 'done' } });
 
     const ctx = makeContext();
     await handler(makeSignal(), ctx);
@@ -448,8 +448,8 @@ describe('withAgent', () => {
   it('passes permissionMode acceptEdits correctly', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       permissionMode: 'acceptEdits',
       output: { type: 'done' },
@@ -467,8 +467,8 @@ describe('withAgent', () => {
       makeResultMessage({ total_cost_usd: 0.1234, duration_ms: 5000 }),
     ]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({ prompt: 'test', output: { type: 'done' } });
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({ prompt: 'test', output: { type: 'done' } });
 
     const ctx = makeContext();
     await handler(makeSignal(), ctx);
@@ -485,8 +485,8 @@ describe('withAgent', () => {
       query: () => { throw new Error('API key invalid'); },
     }));
 
-    const { withAgent } = await import('../../src/providers/agent.js');
-    const handler = withAgent({ prompt: 'test', output: { type: 'done' } });
+    const { withClaudeCode } = await import('../../src/providers/claude-code.js');
+    const handler = withClaudeCode({ prompt: 'test', output: { type: 'done' } });
 
     await expect(handler(makeSignal(), makeContext())).rejects.toThrow('API key invalid');
   });

@@ -88,14 +88,14 @@ export { createSentinel } from './patterns/sentinel.js';
 export type { Sentinel, SentinelConfig, SentinelEvaluation, SentinelStats } from './patterns/sentinel.js';
 
 // Action providers
-export { withAgent } from './providers/agent.js';
+export { withClaudeCode } from './providers/claude-code.js';
 export { withStructuredOutput } from './providers/structured-output.js';
 export { withBash } from './providers/bash.js';
 export { assembleContext, withContext } from './providers/context.js';
 
 export type {
   ActionHandler,
-  AgentProviderConfig,
+  ClaudeCodeConfig,
   AgentResult,
   BedrockConfig,
   StructuredOutputConfig,

@@ -4,7 +4,7 @@
 import type { Environment, Signal } from '../../src/core/types.js';
 import type { AgentResult, SignalDeposit, BedrockConfig } from '../../src/providers/types.js';
 import { colony } from '../../src/dsl/builder.js';
-import { withAgent } from '../../src/providers/agent.js';
+import { withClaudeCode } from '../../src/providers/claude-code.js';
 
 // ----------------------------------------------------------
 // Signal payload types
@@ -94,7 +94,7 @@ export function createFixerColony(
     builder = builder.sense(t, { unclaimed: true });
   }
   const def = builder
-    .do('fix-issue', withAgent({
+    .do('fix-issue', withClaudeCode({
       model,
 
       systemPrompt: [

@@ -33,7 +33,7 @@ export type ActionHandler<T = Record<string, unknown>> = (
 
 /**
  * Config for routing requests through AWS Bedrock.
- * Used by both withAgent (env vars) and withStructuredOutput (SDK client).
+ * Used by both withClaudeCode (env vars) and withStructuredOutput (SDK client).
  */
 export interface BedrockConfig {
   /** AWS region for Bedrock. Required. */
@@ -59,10 +59,10 @@ export interface BedrockConfig {
 // ----------------------------------------------------------
 
 /**
- * Config for the Claude agent provider (withAgent).
- * Uses Claude Agent SDK for full agentic coding capabilities.
+ * Config for the Claude Code provider (withClaudeCode).
+ * Uses Claude Code SDK for full agentic coding capabilities.
  */
-export interface AgentProviderConfig<T = Record<string, unknown>> {
+export interface ClaudeCodeConfig<T = Record<string, unknown>> {
   /** Model to use. Defaults to 'claude-sonnet-4-5-20250929'. */
   model?: string;
 

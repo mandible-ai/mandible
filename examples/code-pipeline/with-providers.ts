@@ -5,7 +5,7 @@
 // Same pipeline as index.ts, but using action providers
 // instead of simulated work functions.
 //
-// Shaper:  withAgent (Claude Code SDK) — full coding agent
+// Shaper:  withClaudeCode (Claude Code SDK) — full coding agent
 // Critic:  withStructuredOutput (Anthropic) — structured review
 // Keeper:  withBash — git merge
 //
@@ -22,7 +22,7 @@ import { rm, mkdir } from 'node:fs/promises';
 import { FilesystemEnvironment } from '../../src/environments/filesystem/index.js';
 import { colony } from '../../src/dsl/index.js';
 import { createRuntime } from '../../src/core/runtime.js';
-import { withAgent } from '../../src/providers/agent.js';
+import { withClaudeCode } from '../../src/providers/claude-code.js';
 import { withStructuredOutput } from '../../src/providers/structured-output.js';
 import { withBash } from '../../src/providers/bash.js';
 import { assembleContext } from '../../src/providers/context.js';
@@ -49,7 +49,7 @@ function defineColonies(env: FilesystemEnvironment) {
   const shaperDef = colony('shaper')
     .in(env)
     .sense('task:ready', { unclaimed: true, minConcentration: 0.1 })
-    .do('shape-code', withAgent({
+    .do('shape-code', withClaudeCode({
       model: 'claude-sonnet-4-5-20250929',
 
       systemPrompt: [

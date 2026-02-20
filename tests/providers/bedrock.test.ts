@@ -1,4 +1,4 @@
-// PURPOSE: Tests for AWS Bedrock integration in withAgent and withStructuredOutput providers.
+// PURPOSE: Tests for AWS Bedrock integration in withClaudeCode and withStructuredOutput providers.
 // PURPOSE: Covers env var building, merging, guardrail headers, SDK error handling.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -82,7 +82,7 @@ describe('buildBedrockEnv', () => {
 
   beforeEach(async () => {
     vi.resetModules();
-    const mod = await import('../../src/providers/agent.js');
+    const mod = await import('../../src/providers/claude-code.js');
     buildBedrockEnv = mod.buildBedrockEnv;
   });
 
@@ -161,9 +161,9 @@ describe('buildBedrockEnv', () => {
   });
 });
 
-// ── withAgent Bedrock integration ───────────────────────────
+// ── withClaudeCode Bedrock integration ──────────────────────
 
-describe('withAgent + Bedrock', () => {
+describe('withClaudeCode + Bedrock', () => {
   let mockQuery: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -175,16 +175,16 @@ describe('withAgent + Bedrock', () => {
     }));
   });
 
-  async function loadWithAgent() {
-    const mod = await import('../../src/providers/agent.js');
-    return mod.withAgent;
+  async function loadWithClaudeCode() {
+    const mod = await import('../../src/providers/claude-code.js');
+    return mod.withClaudeCode;
   }
 
   it('passes Bedrock env vars to SDK queryOptions.env', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       bedrock: { region: 'us-east-1' },
       output: { type: 'done' },
@@ -200,8 +200,8 @@ describe('withAgent + Bedrock', () => {
   it('merges Bedrock env with user-provided env (user takes precedence)', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       bedrock: { region: 'us-east-1', model: 'default-model' },
       env: { AWS_REGION: 'eu-west-1', CUSTOM_VAR: 'hello' },
@@ -221,8 +221,8 @@ describe('withAgent + Bedrock', () => {
   it('includes full Bedrock config with guardrails', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       bedrock: {
         region: 'us-west-2',
@@ -252,8 +252,8 @@ describe('withAgent + Bedrock', () => {
   it('does not set env when no bedrock config and no user env', async () => {
     mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
 
-    const withAgent = await loadWithAgent();
-    const handler = withAgent({
+    const withClaudeCode = await loadWithClaudeCode();
+    const handler = withClaudeCode({
       prompt: 'test',
       output: { type: 'done' },
     });

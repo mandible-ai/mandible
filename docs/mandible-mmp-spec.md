@@ -31,7 +31,7 @@ The following code is implemented and type-checks in the `stigmergy/` repo:
 - **Colony runtime** (`src/core/runtime.ts`) — the stigmergy loop engine (sense → match → claim → execute → deposit), with concurrent execution, retries, decay sweeps
 - **Colony DSL** (`src/dsl/builder.ts`) — fluent builder: `colony('name').in(env).sense(...).when(...).do(...).claim(...).build()`
 - **Filesystem adapter** (`src/environments/filesystem/adapter.ts`) — working environment adapter storing signals as JSON files. Structure: `signals/`, `withdrawn/`, `claims/`
-- **Action providers** (`src/providers/`) — `withAgent` (Claude Code SDK stub), `withStructuredOutput` (Anthropic/OpenAI/Vercel AI), `withBash` (shell commands), context assembly from signal lineage
+- **Action providers** (`src/providers/`) — `withClaudeCode` (Claude Code SDK stub), `withStructuredOutput` (Anthropic/OpenAI/Vercel AI), `withBash` (shell commands), context assembly from signal lineage
 - **Attestation utilities** (`src/core/attestation.ts`) — Ed25519 signing/verification using `@noble/ed25519`, attestation chain creation and verification, `prepareForBridge`
 - **Colony patterns** (`src/patterns/`) — SignalBridge (cross-environment mirroring with attestation), Sentinel (trust monitoring)
 - **Working demo** (`examples/code-pipeline/index.ts`) — 5 tasks self-organize through Shaper→Critic→Keeper with simulated work. Runs with `node --import tsx examples/code-pipeline/index.ts`
@@ -85,18 +85,18 @@ The runtime should accept an optional `onEvent` callback in the colony definitio
 
 Also add an `environment:snapshot` event type that periodically emits the full state of all active signals (for dashboard initialization and reconnection).
 
-#### 1.3 Wire `withAgent` to Claude Code SDK
+#### 1.3 Wire `withClaudeCode` to Claude Code SDK
 
-The `withAgent` provider (`src/providers/agent.ts`) currently has the right structure but uses a dynamic import of `@anthropic-ai/claude-code`. Make it actually work:
+The `withClaudeCode` provider (`src/providers/claude-code.ts`) currently has the right structure but uses a dynamic import of `@anthropic-ai/claude-code`. Make it actually work:
 
 - The Claude Code SDK (`@anthropic-ai/claude-code`) should be an optional peer dependency (it already is in package.json)
-- When a colony rule uses `withAgent`, it should:
+- When a colony rule uses `withClaudeCode`, it should:
   1. Call `assembleContext()` to walk signal lineage and build a prompt
   2. Invoke Claude Code SDK with the assembled prompt, configured tools, and system prompt
   3. Parse the response and map it to signal deposits using the `outputMapping` config
   4. Return the deposits so the runtime can deposit them into the environment
-- Handle the case where the SDK is not installed (throw a clear error: "Install @anthropic-ai/claude-code to use withAgent")
-- The `withAgent` config should support:
+- Handle the case where the SDK is not installed (throw a clear error: "Install @anthropic-ai/claude-code to use withClaudeCode")
+- The `withClaudeCode` config should support:
   - `systemPrompt` — base instructions for the agent
   - `tools` — which Claude Code tools to enable (Read, Write, Edit, Bash, etc.)
   - `maxTurns` — limit on agentic turns
@@ -154,7 +154,7 @@ The config file exports a `MandibleConfig` object:
 
 ```typescript
 // mandible.config.ts
-import { colony, FilesystemEnvironment, withAgent, withBash } from 'mandible';
+import { colony, FilesystemEnvironment, withClaudeCode, withBash } from 'mandible';
 
 const env = new FilesystemEnvironment({ root: './.mandible/signals' });
 
@@ -164,7 +164,7 @@ export default {
     colony('shaper')
       .in(env)
       .sense({ type: 'task:ready' })
-      .do(withAgent({
+      .do(withClaudeCode({
         systemPrompt: 'You are a code shaper. Given a task, write the implementation.',
         tools: ['Read', 'Write', 'Bash'],
       }))
@@ -175,7 +175,7 @@ export default {
     colony('critic')
       .in(env)
       .sense({ type: 'task:shaped' })
-      .do(withAgent({
+      .do(withClaudeCode({
         systemPrompt: 'You are a code critic. Review the implementation for bugs and style.',
         tools: ['Read'],
       }))
@@ -263,7 +263,7 @@ Running `npx create-mandible my-project` should:
 2. Scaffold:
    - `package.json` with `mandible` as a dependency, `tsx` as a dev dependency, and scripts: `"dev": "mandible dev"`, `"seed": "tsx seed.ts"`
    - `tsconfig.json` with sensible defaults (ES2022, ESNext modules, strict)
-   - `mandible.config.ts` with a 3-colony code pipeline (Shaper, Critic, Keeper) using `withAgent`
+   - `mandible.config.ts` with a 3-colony code pipeline (Shaper, Critic, Keeper) using `withClaudeCode`
    - `seed.ts` — a script that deposits 3 initial `task:ready` signals into the filesystem environment
    - `.mandible/` directory (the signal environment root)
    - `README.md` explaining what the project does and how to run it
@@ -395,7 +395,7 @@ mandible/
 │   │       └── index.ts
 │   ├── providers/
 │   │   ├── types.ts                      # Provider interfaces
-│   │   ├── agent.ts                      # withAgent (Claude Code SDK)
+│   │   ├── claude-code.ts                 # withClaudeCode (Claude Code SDK)
 │   │   ├── structured-output.ts          # withStructuredOutput
 │   │   ├── bash.ts                       # withBash
 │   │   ├── context.ts                    # Context assembly

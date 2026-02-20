@@ -31,14 +31,14 @@ npm install mandible
 ```
 
 ```typescript
-import { colony, createRuntime, FilesystemEnvironment, withAgent } from 'mandible';
+import { colony, createRuntime, FilesystemEnvironment, withClaudeCode } from 'mandible';
 
 const env = new FilesystemEnvironment({ root: './.mandible/signals' });
 
 const shaper = colony('shaper')
   .in(env)
   .sense('task:ready', { unclaimed: true })
-  .do(withAgent({
+  .do(withClaudeCode({
     systemPrompt: 'You are a code shaper. Given a task, write the implementation.',
     allowedTools: ['Read', 'Write', 'Bash'],
   }))
@@ -49,7 +49,7 @@ const shaper = colony('shaper')
 const critic = colony('critic')
   .in(env)
   .sense('task:shaped', { unclaimed: true })
-  .do(withAgent({
+  .do(withClaudeCode({
     systemPrompt: 'You are a code critic. Review the implementation for correctness and style.',
     allowedTools: ['Read'],
   }))
@@ -141,7 +141,7 @@ colony('name')
   .in(env)                                        // which environment
   .sense('type:pattern', { unclaimed: true })     // what to watch for
   .when(signal => signal.payload.priority > 0)    // optional guard
-  .do(withAgent({ allowedTools: ['Read', 'Write'] }))  // action provider
+  .do(withClaudeCode({ allowedTools: ['Read', 'Write'] }))  // action provider
   .concurrency(3)                                 // max parallel agents
   .claim('lease', 30_000)                         // claim strategy
   .poll(2000)                                     // sensor poll interval (ms)
@@ -167,11 +167,11 @@ Action providers wrap external capabilities into a standard interface for colony
 
 | Provider | Use case | Backed by |
 |----------|----------|-----------|
-| `withAgent` | Coding agents, complex reasoning | Claude Code SDK (live) |
+| `withClaudeCode` | Coding agents, complex reasoning | Claude Code SDK (live) |
 | `withStructuredOutput` | Classification, review, decisions | Anthropic, OpenAI, Vercel AI SDK |
 | `withBash` | Build commands, test runners, linters | Shell execution |
 
-`withAgent` is fully wired to the Claude Code SDK — colonies spawn real agent sessions that read files, write code, and run commands. It supports **AWS Bedrock routing** via the `bedrock` config option for enterprise deployments.
+`withClaudeCode` is fully wired to the Claude Code SDK — colonies spawn real agent sessions that read files, write code, and run commands. It supports **AWS Bedrock routing** via the `bedrock` config option for enterprise deployments.
 
 The provider assembles context by walking signal lineage (`caused_by` chains), giving the agent full awareness of the work pipeline state.
 
@@ -323,7 +323,7 @@ src/
     remote/             Remote adapter (WebSocket-based distributed environments)
     dolt/               Dolt adapter (stub)
   providers/
-    agent.ts            withAgent — Claude Code SDK (live)
+    claude-code.ts      withClaudeCode — Claude Code SDK (live)
     structured-output.ts withStructuredOutput — multi-model
     bash.ts             withBash — shell commands
     context.ts          Context assembly from signal lineage
@@ -369,12 +369,12 @@ Scout + Fixer colony pair that maintain a repository. Run it against any repo:
 npm run demo:repo-maintenance
 ```
 
-Both colonies are wired to real Claude agents via `withAgent`. The dashboard shows signal flow in real time.
+Both colonies are wired to real Claude agents via `withClaudeCode`. The dashboard shows signal flow in real time.
 
 ## Roadmap
 
 - [x] `mandible dev` CLI + live dashboard
-- [x] `withAgent` wired to Claude Code SDK
+- [x] `withClaudeCode` wired to Claude Code SDK
 - [x] Test suite (371 tests, 95%+ coverage)
 - [x] GitHub environment adapter
 - [x] Remote environment adapter

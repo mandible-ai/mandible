@@ -266,7 +266,7 @@ describe('createFixerColony', () => {
 describe('output mapper', () => {
   /**
    * Extract the output mapper from a built colony definition.
-   * The withAgent provider wraps it, but we can test parseFixerOutput
+   * The withClaudeCode provider wraps it, but we can test parseFixerOutput
    * + the mapping logic together by simulating what the output mapper does.
    */
 
