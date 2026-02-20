@@ -7,3 +7,4 @@ coverage/
 .idea/
 .claude/
 .env*
+docs/mandible-mmp-spec.md
