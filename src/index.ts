@@ -44,6 +44,8 @@ export {
 
 // Colony DSL
 export { colony } from './dsl/builder.js';
+export { pipeline } from './dsl/pipeline.js';
+export type { PipelineCloudConfig, PipelineDeployOptions, PipelineDevOptions } from './dsl/pipeline.js';
 
 // Runtime
 export { ColonyRuntime, createRuntime } from './core/runtime.js';
