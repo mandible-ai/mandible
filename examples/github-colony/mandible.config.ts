@@ -1,8 +1,8 @@
-// PURPOSE: Dashboard config for GitHub colony — Golem tablets as stigmergy signals
-// PURPOSE: Run: GITHUB_TOKEN=ghp_... npx tsx src/cli/index.ts dev examples/github-colony/mandible.config.ts
+// PURPOSE: GitHub colony example — Golem tablets as stigmergy signals
+// PURPOSE: Run: GITHUB_TOKEN=ghp_... npx tsx examples/github-colony/mandible.config.ts
 
+import { mandible } from '../../src/dsl/mandible.js';
 import { GitHubEnvironment } from '../../src/environments/github/index.js';
-import { colony } from '../../src/dsl/index.js';
 import type { Signal, ActionContext } from '../../src/core/types.js';
 
 // ----------------------------------------------------------
@@ -15,7 +15,7 @@ const POLL_INTERVAL = 30_000;
 
 if (!process.env.GITHUB_TOKEN) {
   console.error('\n  GITHUB_TOKEN is required.');
-  console.error('  Usage: GITHUB_TOKEN=ghp_... npx tsx src/cli/index.ts dev examples/github-colony/mandible.config.ts\n');
+  console.error('  Usage: GITHUB_TOKEN=ghp_... npx tsx examples/github-colony/mandible.config.ts\n');
   process.exit(1);
 }
 
@@ -33,42 +33,34 @@ const env = new GitHubEnvironment({
 });
 
 // ----------------------------------------------------------
-// Colonies
+// Start colonies via mandible DSL
 // ----------------------------------------------------------
 
-// Observer colony — senses golem tablets, logs them
-// In a real setup this would be replaced with a triage/planning colony
-const observer = colony('golem')
-  .in(env)
-  .sense('golem:*', { minConcentration: 0.05 })
-  .do('log-tablet', async (signal: Signal, ctx: ActionContext) => {
-    const payload = signal.payload as Record<string, unknown>;
-    ctx.log(`[${signal.meta.concentration.toFixed(2)}] #${payload.number} ${payload.title}`);
-  })
-  .concurrency(1)
-  .claim('none')
-  .poll(POLL_INTERVAL)
-  .build();
+const host = await mandible('github-colony')
+  .environment(env)
+  // Observer colony — senses golem tablets, logs them
+  .colony('golem', c => c
+    .sense('golem:*', { minConcentration: 0.05 })
+    .do('log-tablet', async (signal: Signal, ctx: ActionContext) => {
+      const payload = signal.payload as Record<string, unknown>;
+      ctx.log(`[${signal.meta.concentration.toFixed(2)}] #${payload.number} ${payload.title}`);
+    })
+    .concurrency(1)
+    .claim('none')
+    .poll(POLL_INTERVAL)
+  )
+  // Watcher colony — senses all issue types for dashboard visibility
+  .colony('issue-watcher', c => c
+    .sense('issue:*', { minConcentration: 0.05 })
+    .do('log-issue', async (signal: Signal, ctx: ActionContext) => {
+      const payload = signal.payload as Record<string, unknown>;
+      ctx.log(`[${signal.meta.concentration.toFixed(2)}] #${payload.number} ${payload.title}`);
+    })
+    .concurrency(1)
+    .claim('none')
+    .poll(POLL_INTERVAL)
+  )
+  .start();
 
-// Watcher colony — senses all issue types for dashboard visibility
-const watcher = colony('issue-watcher')
-  .in(env)
-  .sense('issue:*', { minConcentration: 0.05 })
-  .do('log-issue', async (signal: Signal, ctx: ActionContext) => {
-    const payload = signal.payload as Record<string, unknown>;
-    ctx.log(`[${signal.meta.concentration.toFixed(2)}] #${payload.number} ${payload.title}`);
-  })
-  .concurrency(1)
-  .claim('none')
-  .poll(POLL_INTERVAL)
-  .build();
-
-// ----------------------------------------------------------
-// Export config for mandible dev
-// ----------------------------------------------------------
-
-export default {
-  environment: env,
-  colonies: [observer, watcher],
-  dashboard: { port: 4040, open: true },
-};
+console.log(`Started ${host.colonies.length} colonies (id: ${host.metadata.id})`);
+await host.dashboard({ port: 4040 });

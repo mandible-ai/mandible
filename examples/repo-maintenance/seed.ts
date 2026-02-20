@@ -4,10 +4,10 @@
 
 import { resolve } from 'node:path';
 import { rm, mkdir } from 'node:fs/promises';
+import { mandible } from '../../src/dsl/mandible.js';
 import { FilesystemEnvironment } from '../../src/environments/filesystem/index.js';
-import { createRuntime } from '../../src/core/runtime.js';
-import { createScoutColony } from './scout.js';
-import { createFixerColony } from './fixer.js';
+import { configureScout } from './scout.js';
+import { configureFixer } from './fixer.js';
 
 const ENV_ROOT = resolve('/tmp/mandible-repo-maintenance');
 const args = process.argv.slice(2);
@@ -28,19 +28,17 @@ async function main() {
 
   const env = new FilesystemEnvironment({ root: ENV_ROOT, name: 'repo-maintenance' });
 
-  // 2. Create colonies
-  const scoutDef = createScoutColony(env, TARGET_REPO);
-  const scoutRuntime = createRuntime(scoutDef as any, {
-    decayPolicy: { rate: 0.001, interval: 30_000 },
-  });
+  // 2. Build and start colonies via mandible DSL
+  const builder = mandible('repo-maintenance')
+    .environment(env)
+    .colony('scout', configureScout(TARGET_REPO));
 
-  let fixerRuntime: ReturnType<typeof createRuntime> | undefined;
   if (FIX_MODE) {
-    const fixerDef = createFixerColony(env, TARGET_REPO);
-    fixerRuntime = createRuntime(fixerDef as any, {
-      decayPolicy: { rate: 0.001, interval: 30_000 },
-    });
+    builder.colony('fixer', configureFixer(TARGET_REPO));
   }
+
+  const host = await builder.start();
+  console.log(`Started ${host.colonies.length} colony(s) (id: ${host.metadata.id})\n`);
 
   // 3. Deposit scan trigger
   console.log('Depositing scan:trigger signal...');
@@ -54,16 +52,7 @@ async function main() {
   });
   console.log(`  -> ${trigger.type} (${trigger.id})\n`);
 
-  // 4. Start runtimes
-  console.log('Starting Scout colony...');
-  await scoutRuntime.start();
-  if (fixerRuntime) {
-    console.log('Starting Fixer colony...');
-    await fixerRuntime.start();
-  }
-  console.log('');
-
-  // 5. Wait for scan to complete
+  // 4. Wait for scan to complete
   const maxWaitMs = 5 * 60_000; // 5 minutes max
   const pollMs = 2_000;
   const deadline = Date.now() + maxWaitMs;
@@ -88,7 +77,7 @@ async function main() {
     await sleep(pollMs);
   }
 
-  // 6. Report results
+  // 5. Report results
   console.log('\n' + '='.repeat(50));
   console.log('  Results');
   console.log('='.repeat(50) + '\n');
@@ -118,8 +107,8 @@ async function main() {
     console.log(`  Issues found: ${summary.issueCount}`);
   }
 
-  // 6b. If fix mode, wait for fixes to complete
-  if (fixerRuntime) {
+  // 5b. If fix mode, wait for fixes to complete
+  if (FIX_MODE) {
     const issueCount = issues.length;
     if (issueCount > 0) {
       console.log(`\nWaiting for Fixer colony to process ${issueCount} issue(s)...`);
@@ -161,21 +150,14 @@ async function main() {
     }
   }
 
-  console.log(`\n  Scout runtime stats:`);
-  console.log(`    Signals processed: ${scoutRuntime.stats.signalsProcessed}`);
-  console.log(`    Signals deposited: ${scoutRuntime.stats.signalsDeposited}`);
-  console.log(`    Errors: ${scoutRuntime.stats.errors}`);
-
-  if (fixerRuntime) {
-    console.log(`\n  Fixer runtime stats:`);
-    console.log(`    Signals processed: ${fixerRuntime.stats.signalsProcessed}`);
-    console.log(`    Signals deposited: ${fixerRuntime.stats.signalsDeposited}`);
-    console.log(`    Errors: ${fixerRuntime.stats.errors}`);
+  // 6. Report colony status from host metadata
+  console.log('\n  Colony status:');
+  for (const col of host.colonies) {
+    console.log(`    ${col.name}: ${col.state}`);
   }
 
   // 7. Stop
-  await scoutRuntime.stop();
-  if (fixerRuntime) await fixerRuntime.stop();
+  await host.stop();
   console.log('\nDone.\n');
 }
 

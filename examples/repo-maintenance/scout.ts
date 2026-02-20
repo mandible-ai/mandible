@@ -1,9 +1,9 @@
 // PURPOSE: Scout colony — scans a repository for issues using a Claude agent.
 // PURPOSE: Deposits one `issue:detected` signal per issue found, plus a `scan:completed` summary.
 
-import type { Environment, Signal } from '../../src/core/types.js';
+import type { Signal } from '../../src/core/types.js';
 import type { AgentResult, SignalDeposit, BedrockConfig } from '../../src/providers/types.js';
-import { colony } from '../../src/dsl/builder.js';
+import type { ColonyBuilder } from '../../src/dsl/builder.js';
 import { withClaudeCode } from '../../src/providers/claude-code.js';
 
 // ----------------------------------------------------------
@@ -31,8 +31,6 @@ export interface IssueDetectedPayload {
 export interface ScoutColonyOptions {
   /** Signal types to sense. Defaults to ['scan:trigger']. */
   senseTypes?: string | string[];
-  /** Colony name. Defaults to 'scout'. */
-  name?: string;
   /** Model to use. Defaults to 'claude-sonnet-4-5-20250929'. */
   model?: string;
   /** Max budget per scan in USD. Defaults to 0.50. */
@@ -48,17 +46,24 @@ export interface ScoutColonyOptions {
 }
 
 // ----------------------------------------------------------
-// Scout colony factory
+// Scout colony configurator
 // ----------------------------------------------------------
 
-export function createScoutColony(
-  env: Environment,
+/**
+ * Returns a colony configurator for use with the mandible() DSL.
+ *
+ * @example
+ * await mandible('repo-maintenance')
+ *   .environment(env)
+ *   .colony('scout', configureScout(repoRoot))
+ *   .start();
+ */
+export function configureScout(
   repoRoot: string,
   options: ScoutColonyOptions = {}
 ) {
   const {
     senseTypes = 'scan:trigger',
-    name = 'scout',
     model = 'claude-sonnet-4-5-20250929',
     maxBudgetUsd = 0.50,
     maxTurns = 50,
@@ -69,110 +74,108 @@ export function createScoutColony(
 
   const types = Array.isArray(senseTypes) ? senseTypes : [senseTypes];
 
-  let builder = colony(name).in(env);
-  for (const t of types) {
-    builder = builder.sense(t, { unclaimed: true });
-  }
-  const def = builder
-    .do('scan-repo', withClaudeCode({
-      model,
+  return (c: ColonyBuilder) => {
+    for (const t of types) {
+      c = c.sense(t, { unclaimed: true });
+    }
+    return c
+      .do('scan-repo', withClaudeCode({
+        model,
 
-      systemPrompt: [
-        'You are a Scout agent in a repo-maintenance colony.',
-        'Your job is to scan a repository and identify issues.',
-        '',
-        'Categories to check:',
-        '- dependency: outdated or vulnerable dependencies',
-        '- dead-code: unused exports, unreachable code, unused files',
-        '- test-coverage: untested code paths, missing edge cases',
-        '- security: potential vulnerabilities (injection, secrets, etc.)',
-        '- style: inconsistent formatting, naming, or patterns',
-        '- stale-todo: TODO/FIXME/HACK comments that should be addressed',
-        '',
-        'For each issue found, include:',
-        '- category (one of the above)',
-        '- severity: low, medium, high, or critical',
-        '- title: short one-line summary',
-        '- description: what the issue is and why it matters',
-        '- files: which files are affected',
-        '- suggested_fix: optional fix suggestion',
-        '',
-        'IMPORTANT: Output your findings as a JSON array inside a ```json code block.',
-        'Each element must match the schema above. Example:',
-        '```json',
-        '[',
-        '  {',
-        '    "category": "stale-todo",',
-        '    "severity": "low",',
-        '    "title": "Stale TODO in auth.ts",',
-        '    "description": "TODO comment from 6 months ago about refactoring auth flow",',
-        '    "files": ["src/auth.ts"],',
-        '    "suggested_fix": "Either implement the refactor or remove the TODO"',
-        '  }',
-        ']',
-        '```',
-        '',
-        'If no issues are found, output an empty array: ```json\n[]\n```',
-      ].join('\n'),
-
-      prompt: (signal) => {
-        const p = signal.payload as Record<string, unknown>;
-        const scope = p.scope ?? 'full';
-        return [
-          `## Repository Scan Request`,
+        systemPrompt: [
+          'You are a Scout agent in a repo-maintenance colony.',
+          'Your job is to scan a repository and identify issues.',
           '',
-          `**Scope:** ${scope}`,
-          `**Triggered by:** ${p.triggered_by ?? 'manual'}`,
+          'Categories to check:',
+          '- dependency: outdated or vulnerable dependencies',
+          '- dead-code: unused exports, unreachable code, unused files',
+          '- test-coverage: untested code paths, missing edge cases',
+          '- security: potential vulnerabilities (injection, secrets, etc.)',
+          '- style: inconsistent formatting, naming, or patterns',
+          '- stale-todo: TODO/FIXME/HACK comments that should be addressed',
           '',
-          'Scan this repository for issues across all categories.',
-          'Focus on actionable findings — skip minor style nitpicks unless they indicate a pattern.',
-          'Use the Glob, Grep, and Read tools to explore the codebase.',
-          'Do NOT modify any files.',
-        ].join('\n');
-      },
+          'For each issue found, include:',
+          '- category (one of the above)',
+          '- severity: low, medium, high, or critical',
+          '- title: short one-line summary',
+          '- description: what the issue is and why it matters',
+          '- files: which files are affected',
+          '- suggested_fix: optional fix suggestion',
+          '',
+          'IMPORTANT: Output your findings as a JSON array inside a ```json code block.',
+          'Each element must match the schema above. Example:',
+          '```json',
+          '[',
+          '  {',
+          '    "category": "stale-todo",',
+          '    "severity": "low",',
+          '    "title": "Stale TODO in auth.ts",',
+          '    "description": "TODO comment from 6 months ago about refactoring auth flow",',
+          '    "files": ["src/auth.ts"],',
+          '    "suggested_fix": "Either implement the refactor or remove the TODO"',
+          '  }',
+          ']',
+          '```',
+          '',
+          'If no issues are found, output an empty array: ```json\n[]\n```',
+        ].join('\n'),
 
-      allowedTools,
-      disallowedTools,
-      workingDirectory: repoRoot,
-      maxBudgetUsd,
-      maxTurns,
-      bedrock,
+        prompt: (signal) => {
+          const p = signal.payload as Record<string, unknown>;
+          const scope = p.scope ?? 'full';
+          return [
+            `## Repository Scan Request`,
+            '',
+            `**Scope:** ${scope}`,
+            `**Triggered by:** ${p.triggered_by ?? 'manual'}`,
+            '',
+            'Scan this repository for issues across all categories.',
+            'Focus on actionable findings — skip minor style nitpicks unless they indicate a pattern.',
+            'Use the Glob, Grep, and Read tools to explore the codebase.',
+            'Do NOT modify any files.',
+          ].join('\n');
+        },
 
-      output: (result: AgentResult, signal: Signal): SignalDeposit[] => {
-        const issues = parseScoutOutput(result.text);
-        const deposits: SignalDeposit[] = [];
+        allowedTools,
+        disallowedTools,
+        workingDirectory: repoRoot,
+        maxBudgetUsd,
+        maxTurns,
+        bedrock,
 
-        for (const issue of issues) {
+        output: (result: AgentResult, signal: Signal): SignalDeposit[] => {
+          const issues = parseScoutOutput(result.text);
+          const deposits: SignalDeposit[] = [];
+
+          for (const issue of issues) {
+            deposits.push({
+              type: 'issue:detected',
+              payload: issue as unknown as Record<string, unknown>,
+              tags: [issue.category, issue.severity],
+              ttl: 60 * 60_000, // 60 min — survive long enough for fixer to work the backlog
+            });
+          }
+
           deposits.push({
-            type: 'issue:detected',
-            payload: issue as unknown as Record<string, unknown>,
-            tags: [issue.category, issue.severity],
-            ttl: 60 * 60_000, // 60 min — survive long enough for fixer to work the backlog
+            type: 'scan:completed',
+            payload: {
+              scope: (signal.payload as any).scope ?? 'full',
+              issueCount: issues.length,
+              costUsd: result.costUsd,
+              durationMs: result.durationMs,
+            },
+            tags: ['summary'],
           });
-        }
 
-        deposits.push({
-          type: 'scan:completed',
-          payload: {
-            scope: (signal.payload as any).scope ?? 'full',
-            issueCount: issues.length,
-            costUsd: result.costUsd,
-            durationMs: result.durationMs,
-          },
-          tags: ['summary'],
-        });
+          return deposits;
+        },
 
-        return deposits;
-      },
-
-      autoWithdraw: true,
-    }))
-    .concurrency(1)
-    .claim('none')
-    .poll(3000)
-    .build();
-
-  return def;
+        autoWithdraw: true,
+      }))
+      .concurrency(1)
+      .claim('none')
+      .poll(3000);
+  };
 }
 
 // ----------------------------------------------------------

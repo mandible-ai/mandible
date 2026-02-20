@@ -1,11 +1,12 @@
-// PURPOSE: Dashboard config for repo-maintenance colonies (Scout + Fixer).
-// PURPOSE: Run: npx tsx src/cli/index.ts dev examples/repo-maintenance/mandible.config.ts
+// PURPOSE: Repo-maintenance example — Scout + Fixer colonies.
+// PURPOSE: Run: npx tsx examples/repo-maintenance/mandible.config.ts
 
 import { resolve } from 'node:path';
 import { rm, mkdir } from 'node:fs/promises';
+import { mandible } from '../../src/dsl/mandible.js';
 import { FilesystemEnvironment } from '../../src/environments/filesystem/index.js';
-import { createScoutColony } from './scout.js';
-import { createFixerColony } from './fixer.js';
+import { configureScout } from './scout.js';
+import { configureFixer } from './fixer.js';
 
 const ENV_ROOT = resolve('/tmp/mandible-repo-maintenance');
 const TARGET_REPO = resolve(process.env.TARGET_REPO ?? process.cwd());
@@ -16,12 +17,17 @@ await mkdir(ENV_ROOT, { recursive: true });
 
 const env = new FilesystemEnvironment({ root: ENV_ROOT, name: 'repo-maintenance' });
 
-// ── Colonies ────────────────────────────────────────────────
+// ── Start colonies via mandible DSL ───────────────────────
 
-const scout = createScoutColony(env, TARGET_REPO);
-const fixer = createFixerColony(env, TARGET_REPO);
+const host = await mandible('repo-maintenance')
+  .environment(env)
+  .colony('scout', configureScout(TARGET_REPO))
+  .colony('fixer', configureFixer(TARGET_REPO))
+  .start();
 
-// ── Seed scan trigger after a short delay ───────────────────
+console.log(`Started ${host.colonies.length} colonies (id: ${host.metadata.id})`);
+
+// ── Seed scan trigger after a short delay ─────────────────
 
 setTimeout(async () => {
   await env.deposit({
@@ -34,10 +40,4 @@ setTimeout(async () => {
   });
 }, 2000);
 
-// ── Export config for mandible dev ──────────────────────────
-
-export default {
-  environment: env,
-  colonies: [scout, fixer],
-  dashboard: { port: 4040, open: true },
-};
+await host.dashboard({ port: 4040 });
