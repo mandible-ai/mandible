@@ -60,7 +60,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mandible-ai/mandible"
+    "url": "git+https://github.com/mandible-ai/mandible.git"
   },
   "scripts": {
     "build": "tsc",
