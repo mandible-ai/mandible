@@ -14,8 +14,9 @@ import type {
   DeployOptions,
   Deployment,
   Environment,
+  HostResources,
 } from '../core/types.js';
-import type { DeployColonyConfig, ZoneResources } from '../cloud/types.js';
+import type { DeployColonyConfig } from '../cloud/types.js';
 
 export interface DockerHostConfig {
   /** Mandible Cloud API URL */
@@ -27,7 +28,7 @@ export interface DockerHostConfig {
   /** Default container image for colonies */
   image?: string;
   /** Default resource allocation per colony */
-  resources?: ZoneResources;
+  resources?: HostResources;
   /** Human-readable name */
   name?: string;
   /** Timeout for waiting for containers to be ready (ms). Default: 30_000 */

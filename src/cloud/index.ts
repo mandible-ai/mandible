@@ -1,8 +1,7 @@
 export { RemoteEnvironment } from '../environments/remote/index.js';
 export type { RemoteEnvConfig } from '../environments/remote/index.js';
 export { MandibleCloudClient, MandibleCloudError } from './client.js';
-export { CloudHost, cloud } from './host.js';
-export type { CloudHostConfig } from './host.js';
+// CloudHost lives in @mandible-ai/cloud (mandible-cloud repo)
 export type {
   CloudConfig,
   Project,

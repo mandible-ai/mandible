@@ -216,6 +216,13 @@ export interface DeployOptions {
   image?: string;
 }
 
+export interface HostResources {
+  targetCpus?: number;
+  maxCpus?: number;
+  targetMemoryMb?: number;
+  maxMemoryMb?: number;
+}
+
 export interface Deployment {
   /** Per-colony deployment details */
   colonies: Array<{ name: string; state: string; zoneId?: string }>;

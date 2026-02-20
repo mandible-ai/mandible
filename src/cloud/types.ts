@@ -6,6 +6,11 @@
 // and the private Cloud API server.
 // ============================================================
 
+import type { HostResources } from '../core/types.js';
+
+/** @deprecated Use HostResources from core/types instead */
+export type ZoneResources = HostResources;
+
 export interface CloudConfig {
   apiUrl: string;
   apiKey: string;
@@ -38,12 +43,7 @@ export interface DeployColonyConfig {
   resources?: ZoneResources;
 }
 
-export interface ZoneResources {
-  targetCpus?: number;
-  maxCpus?: number;
-  targetMemoryMb?: number;
-  maxMemoryMb?: number;
-}
+
 
 export interface DeployResult {
   projectId: string;
