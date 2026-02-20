@@ -63,19 +63,17 @@ No colony references any other colony. They coordinate entirely through signals 
 
 ### Cloud deployment
 
-For production workloads, run colonies in isolated Edera zones via [Mandible Cloud](https://mandible.dev):
+For production workloads, run colonies in isolated Edera microVMs via [Mandible Cloud](https://mandible.dev):
 
 ```typescript
-import { mandible } from '@mandible-ai/mandible';
-import { CloudEnvironment } from '@mandible-ai/cloud';
+import { mandible, FilesystemEnvironment } from '@mandible-ai/mandible';
+import { cloud } from '@mandible-ai/cloud';
 
-const env = new CloudEnvironment({
-  apiKey: process.env.MANDIBLE_API_KEY,
-  project: 'code-review',
-});
+const env = new FilesystemEnvironment({ root: './.mandible/signals' });
 
 const host = await mandible('code-review')
   .environment(env)
+  .host(cloud({ apiKey: process.env.MANDIBLE_API_KEY, project: 'code-review' }))
   .colony('shaper', c => c.sense('task:ready').do('shape', shapeHandler))
   .colony('critic', c => c.sense('artifact:shaped').do('review', reviewHandler))
   .start();
@@ -84,7 +82,7 @@ const host = await mandible('code-review')
 await host.stop();
 ```
 
-Same DSL, different host. The host decides how colonies run.
+Same DSL, same environment, different host. The host decides where colony code runs.
 
 ### Run with the dashboard
 
@@ -267,21 +265,6 @@ const env = new GitHubEnvironment({
 });
 ```
 
-### Remote (implemented)
-
-WebSocket-based environment for distributed deployments. Multiple machines share a single signal namespace over the network.
-
-```typescript
-import { RemoteEnvironment } from '@mandible-ai/mandible';
-
-const env = new RemoteEnvironment({
-  url: 'ws://coordinator:4041',
-  apiKey: process.env.MANDIBLE_API_KEY,
-  project: 'my-project',
-  name: 'distributed',
-});
-```
-
 ### Dolt (stubbed)
 
 [Dolt](https://www.dolthub.com/) is a SQL database with Git-like versioning. Signals become rows, branching enables parallel work, and `dolt_history` provides queryable time travel for the full signal history.
@@ -305,7 +288,21 @@ interface Environment {
 }
 ```
 
-Hosts are orthogonal to Environments. The environment is where signals live; the host is where colony code runs. Call `host.start(colonies)` to start and `host.stop()` to shut down. `host.dashboard()` opens the live observability UI.
+Hosts are orthogonal to Environments. To run colonies somewhere other than the local process, implement the `Host` interface:
+
+```typescript
+interface Host {
+  name: string;
+  start(colonies: ColonyDefinition[]): Promise<void>;
+  stop(): Promise<void>;
+  dashboard(options?: DashboardOptions): Promise<void>;
+  metadata: HostMetadata;
+  colonies: Array<{ name: string; state: string }>;
+  environments: Environment[];
+}
+```
+
+Built-in hosts: `local()` (in-process), `docker()` (containers). Cloud hosts live in `@mandible-ai/cloud`.
 
 ## Patterns
 
@@ -360,12 +357,14 @@ src/
     attestation.ts      Ed25519 signing & verification (@noble/ed25519)
   dsl/
     builder.ts          Fluent colony definition DSL
-    pipeline.ts         mandible() — multi-colony orchestration + deploy
+    mandible.ts         mandible() — multi-colony orchestration + start
   environments/
     filesystem/         Filesystem adapter (JSON files + atomic claims)
     github/             GitHub adapter (issues, PRs, comments, labels as signals)
-    remote/             Remote adapter (WebSocket-based distributed environments)
     dolt/               Dolt adapter (stub)
+  hosts/
+    local.ts            LocalHost — runs colonies in current process
+    docker.ts           DockerHost — runs colonies as Docker containers
   providers/
     claude-code.ts      withClaudeCode — Claude Code SDK (live)
     structured-output.ts withStructuredOutput — multi-model
@@ -421,9 +420,9 @@ Both colonies are wired to real Claude agents via `withClaudeCode`. The dashboar
 - [x] `withClaudeCode` wired to Claude Code SDK
 - [x] Test suite (378 tests, 95%+ coverage)
 - [x] GitHub environment adapter
-- [x] Remote environment adapter
-- [x] `mandible()` DSL with environment-based deployment
-- [ ] `@mandible-ai/cloud` — deploy to Edera zones via Mandible Cloud
+- [x] `mandible()` DSL with Host/Environment separation
+- [x] `local()` and `docker()` host implementations
+- [ ] `@mandible-ai/cloud` — run colonies in Edera microVMs via Mandible Cloud
 - [ ] `create-mandible` starter template
 - [ ] Dashboard GIF + landing page
 - [ ] Dolt full implementation
