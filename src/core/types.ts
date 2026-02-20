@@ -180,45 +180,75 @@ export interface Subscription {
   unsubscribe(): void;
 }
 
-/**
- * Optional interface for environments that support deploying colonies.
- * Each environment implements this differently:
- * - FilesystemEnvironment: starts local runtimes
- * - RemoteEnvironment: calls Cloud API to launch Edera zones
- * - DoltEnvironment: connects to database, starts local runtimes
- */
-export interface Deployable {
-  /** Deploy colony definitions into this environment */
-  deploy(colonies: ColonyDefinition[], options?: DeployOptions): Promise<Deployment>;
-  /** Tear down all deployed colonies */
-  teardown(): Promise<void>;
+// ----------------------------------------------------------
+// Host — the process model (where colony code executes)
+// ----------------------------------------------------------
+// Hosts are orthogonal to Environments:
+//   Environment = where signals live (GitHub, filesystem, Kafka, signal server)
+//   Host        = where colony code runs (local machine, Docker, Edera microVM)
+//
+// A single host can run colonies that observe multiple environments.
+// A single environment can be observed by colonies on different hosts.
+// ----------------------------------------------------------
+
+export interface Host<M extends HostMetadata = HostMetadata> {
+  /** Human-readable name for this host */
+  readonly name: string;
+
+  /**
+   * Start colony definitions on this host.
+   * The host decides how to run the colony code.
+   * The colony definitions already reference their environments.
+   */
+  start(colonies: ColonyDefinition[]): Promise<void>;
+
+  /** Stop all running colonies */
+  stop(): Promise<void>;
+
+  /** Deployment metadata — populated after start() completes */
+  readonly metadata: M;
+
+  /** Per-colony status (populated after start) */
+  readonly colonies: Array<{ name: string; state: string; zoneId?: string }>;
+
+  /** The environments the colonies are observing (populated after start) */
+  readonly environments: Environment[];
+
+  /** Open the live dashboard */
+  dashboard(options?: DashboardOptions): Promise<void>;
 }
 
-export interface DeployOptions {
-  /** Dashboard port. Default: 4040 */
+/** Deployment metadata returned by start(). Subclassed per host type. */
+export interface HostMetadata {
+  /** Unique deployment ID */
+  id: string;
+  /** When start() completed */
+  startedAt: Date;
+}
+
+export interface DashboardOptions {
   port?: number;
-  /** Auto-open dashboard in browser. Default: true */
   open?: boolean;
-  /** Deploy without starting dashboard. Default: false */
-  headless?: boolean;
-  /** Colony container image (remote environments only) */
-  image?: string;
 }
 
-export interface Deployment {
-  /** Per-colony deployment details */
-  colonies: Array<{ name: string; state: string }>;
-  /** Open the dashboard */
-  dashboard(options?: { port?: number; open?: boolean }): Promise<void>;
-  /** Tear down all deployed colonies and clean up */
-  teardown(): Promise<void>;
-  /** The environment this deployment is running in */
-  environment: Environment;
+export interface HostResources {
+  targetCpus?: number;
+  maxCpus?: number;
+  targetMemoryMb?: number;
+  maxMemoryMb?: number;
 }
 
-/** Type guard for environments that support deployment */
-export function isDeployable(env: Environment): env is Environment & Deployable {
-  return 'deploy' in env && typeof (env as any).deploy === 'function';
+/** Type guard to check if an object is a Host */
+export function isHost(obj: unknown): obj is Host {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'name' in obj &&
+    'start' in obj &&
+    typeof (obj as Host).start === 'function' &&
+    'stop' in obj &&
+    typeof (obj as Host).stop === 'function'
+  );
 }
 
 export interface DecayResult {

@@ -1,14 +1,19 @@
 // ============================================================
 // Mandible DSL — Multi-Colony Orchestration
 // ============================================================
+// Two orthogonal axes:
+//   .environment(env) — where signals live (the observable world)
+//   .host(host)       — where colony code runs (the process model)
+//
 // Usage:
 //
-//   import { mandible, FilesystemEnvironment } from '@mandible-ai/mandible';
+//   import { mandible, FilesystemEnvironment, local } from '@mandible-ai/mandible';
 //
 //   const env = new FilesystemEnvironment({ root: '/tmp/demo' });
 //
-//   await mandible('code-review')
+//   const host = await mandible('code-review')
 //     .environment(env)
+//     .host(local())              // optional, local() is the default
 //     .colony('shaper', c => c
 //       .sense('task:ready', { unclaimed: true })
 //       .do('shape', async (signal, ctx) => { ... })
@@ -18,21 +23,27 @@
 //       .sense('artifact:shaped', { unclaimed: true })
 //       .do('review', async (signal, ctx) => { ... })
 //     )
-//     .deploy();
+//     .start();
 //
-//   // Cloud deployment (requires @mandible-ai/cloud):
-//   import { CloudEnvironment } from '@mandible-ai/cloud';
-//   const env = new CloudEnvironment({ apiKey: KEY, project: 'review' });
-//   await mandible('review').environment(env).colony(...).deploy();
+//   // Cloud — same environments, different host:
+//   import { cloud } from '@mandible-ai/cloud';
+//
+//   const host = await mandible('review')
+//     .environment(env)                // same environment, real signal substrate
+//     .host(cloud({ apiKey: CLOUD_KEY })) // colonies run in Edera microVMs
+//     .colony('worker', c => c.sense('task:ready').do('work', handler))
+//     .start();
+//
+//   // Dashboard is opt-in after start:
+//   await host.dashboard({ port: 4040 });
 //
 // ============================================================
 
 import { ColonyBuilder, colony as colonyBuilder } from './builder.js';
 import type {
   Environment, ColonyDefinition,
-  Deployment, DeployOptions, Deployable,
+  Host,
 } from '../core/types.js';
-import { isDeployable } from '../core/types.js';
 
 type ColonyConfigurator = (builder: ColonyBuilder) => ColonyBuilder;
 
@@ -44,15 +55,25 @@ interface ColonyEntry {
 export class MandibleBuilder {
   private _name: string;
   private _env?: Environment;
+  private _host?: Host;
   private _colonies: ColonyEntry[] = [];
 
   constructor(name: string) {
     this._name = name;
   }
 
-  /** Set the environment colonies operate in */
+  /** Set the environment colonies observe (where signals live) */
   environment(env: Environment): this {
     this._env = env;
+    return this;
+  }
+
+  /**
+   * Set the host where colony code runs (the process model).
+   * If not specified, defaults to LocalHost (runs in current process).
+   */
+  host(host: Host): this {
+    this._host = host;
     return this;
   }
 
@@ -63,23 +84,22 @@ export class MandibleBuilder {
   }
 
   /**
-   * Deploy colonies into the configured environment.
-   * What "deploy" means depends on the environment:
-   * - FilesystemEnvironment: starts local runtimes + dashboard
-   * - CloudEnvironment (@mandible-ai/cloud): launches Edera zones via Cloud API
+   * Start colonies on the configured host.
+   * What "start" means depends on the host:
+   * - local():  starts Node runtimes in the current process
+   * - docker(): launches Docker containers via Cloud API
+   * - cloud():  launches Edera microVMs via Cloud API
+   *
+   * Returns the host — use host.stop() to shut down,
+   * host.dashboard() to open the live dashboard,
+   * host.metadata for deployment info.
    */
-  async deploy(options: DeployOptions = {}): Promise<Deployment> {
+  async start(): Promise<Host> {
     const env = this.requireEnv();
-
-    if (!isDeployable(env)) {
-      throw new Error(
-        `Environment "${env.name}" does not support deployment. ` +
-        `Use an environment that implements Deployable (e.g. FilesystemEnvironment, CloudEnvironment).`,
-      );
-    }
-
+    const host = await this.resolveHost();
     const definitions = this.buildDefinitions(env);
-    return env.deploy(definitions, options);
+    await host.start(definitions);
+    return host;
   }
 
   /**
@@ -103,6 +123,13 @@ export class MandibleBuilder {
     });
   }
 
+  private async resolveHost(): Promise<Host> {
+    if (this._host) return this._host;
+    // Default: run locally
+    const { LocalHost } = await import('../hosts/local.js');
+    return new LocalHost();
+  }
+
   private requireEnv(): Environment {
     if (!this._env) {
       throw new Error(
@@ -118,17 +145,21 @@ export class MandibleBuilder {
  *
  * @example
  * const env = new FilesystemEnvironment({ root: '/tmp/demo' });
- * await mandible('my-swarm')
- *   .environment(env)
+ * const host = await mandible('my-swarm')
+ *   .environment(env)         // where signals live
+ *   .host(local())            // where code runs (optional, defaults to local)
  *   .colony('worker', c => c
  *     .sense('task:new')
  *     .do('process', async (signal, ctx) => { ... })
  *   )
- *   .deploy();
+ *   .start();
+ *
+ * // Deployment metadata available immediately:
+ * console.log(host.metadata.id, host.metadata.startedAt);
+ *
+ * // Dashboard is opt-in:
+ * await host.dashboard({ port: 4040 });
  */
 export function mandible(name: string): MandibleBuilder {
   return new MandibleBuilder(name);
 }
-
-/** @deprecated Use mandible() instead */
-export const pipeline = mandible;

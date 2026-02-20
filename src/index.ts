@@ -22,6 +22,8 @@ export type {
   RuntimeStats,
   RuntimeEvent,
   DecayPolicy,
+  // Host — the process model (where colony code runs)
+  Host,
   // Provenance & Trust types
   TrustLevel,
   Attestation,
@@ -44,11 +46,19 @@ export {
 
 // Colony DSL
 export { colony } from './dsl/builder.js';
-export { mandible, pipeline } from './dsl/mandible.js';
+export { mandible } from './dsl/mandible.js';
 
-// Deployment
-export { isDeployable } from './core/types.js';
-export type { Deployable, Deployment, DeployOptions } from './core/types.js';
+// Host lifecycle
+export { isHost } from './core/types.js';
+export type { HostMetadata, DashboardOptions, HostResources } from './core/types.js';
+
+// Hosts — where colony code runs (the process model)
+// LocalHost and DockerHost are part of the OSS core.
+// CloudHost (Edera microVMs) lives in @mandible-ai/cloud (mandible-cloud repo).
+export { LocalHost, local } from './hosts/local.js';
+export type { LocalHostMetadata } from './hosts/local.js';
+export { DockerHost, docker } from './hosts/docker.js';
+export type { DockerHostConfig, DockerHostMetadata } from './hosts/docker.js';
 
 // Runtime
 export { ColonyRuntime, createRuntime } from './core/runtime.js';
@@ -65,8 +75,7 @@ export { FilesystemEnvironment } from './environments/filesystem/index.js';
 export { DoltEnvironment } from './environments/dolt/index.js';
 export { GitHubEnvironment } from './environments/github/index.js';
 export type { GitHubEnvConfig } from './environments/github/index.js';
-export { RemoteEnvironment } from './environments/remote/index.js';
-export type { RemoteEnvConfig } from './environments/remote/index.js';
+
 
 // Default policies
 export { DEFAULT_DECAY_POLICY } from './core/types.js';

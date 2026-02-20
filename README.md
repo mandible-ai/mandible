@@ -35,7 +35,7 @@ import { mandible, FilesystemEnvironment } from '@mandible-ai/mandible';
 
 const env = new FilesystemEnvironment({ root: './.mandible/signals' });
 
-await mandible('code-review')
+const host = await mandible('code-review')
   .environment(env)
   .colony('shaper', c => c
     .sense('task:ready', { unclaimed: true })
@@ -56,14 +56,14 @@ await mandible('code-review')
     })
     .claim('exclusive')
   )
-  .deploy();
+  .start();
 ```
 
-No colony references any other colony. They coordinate entirely through signals in the environment. `deploy()` starts the runtimes and opens the live dashboard.
+No colony references any other colony. They coordinate entirely through signals in the environment. `start()` starts the runtimes and opens the live dashboard.
 
 ### Cloud deployment
 
-For production workloads, deploy colonies to isolated Edera zones via [Mandible Cloud](https://mandible.dev):
+For production workloads, run colonies in isolated Edera zones via [Mandible Cloud](https://mandible.dev):
 
 ```typescript
 import { mandible } from '@mandible-ai/mandible';
@@ -74,17 +74,17 @@ const env = new CloudEnvironment({
   project: 'code-review',
 });
 
-const deployment = await mandible('code-review')
+const host = await mandible('code-review')
   .environment(env)
   .colony('shaper', c => c.sense('task:ready').do('shape', shapeHandler))
   .colony('critic', c => c.sense('artifact:shaped').do('review', reviewHandler))
-  .deploy();
+  .start();
 
 // Later:
-await deployment.teardown();
+await host.stop();
 ```
 
-Same DSL, different environment. The environment decides what "deploy" means.
+Same DSL, different host. The host decides how colonies run.
 
 ### Run with the dashboard
 
@@ -157,10 +157,10 @@ Other colonies sense those deposited signals and the cycle continues. Complex wo
 
 ## Mandible DSL
 
-The `mandible()` function is the top-level entry point for defining and deploying multi-colony systems:
+The `mandible()` function is the top-level entry point for defining and starting multi-colony systems:
 
 ```typescript
-const deployment = await mandible('pipeline-name')
+const host = await mandible('pipeline-name')
   .environment(env)                               // where colonies operate
   .colony('name', c => c                          // define a colony inline
     .sense('type:pattern', { unclaimed: true })   // what to watch for
@@ -168,10 +168,10 @@ const deployment = await mandible('pipeline-name')
     .concurrency(3)                               // max parallel agents
     .claim('lease', 30_000)                       // claim strategy
   )
-  .deploy();                                      // start everything
+  .start();                                       // start everything
 ```
 
-`deploy()` delegates to the environment — `FilesystemEnvironment` starts local runtimes + dashboard, `CloudEnvironment` launches Edera zones. The returned `Deployment` handle provides `teardown()` and `dashboard()` methods.
+`start()` delegates to the host — `local()` starts Node runtimes in the current process, `docker()` launches containers, `cloud()` launches Edera microVMs. Returns the host for lifecycle control (`host.stop()`, `host.dashboard()`).
 
 ### Colony builder
 
@@ -305,16 +305,7 @@ interface Environment {
 }
 ```
 
-To support `mandible().deploy()`, also implement the `Deployable` interface:
-
-```typescript
-interface Deployable {
-  deploy(colonies: ColonyDefinition[], options?: DeployOptions): Promise<Deployment>;
-  teardown(): Promise<void>;
-}
-```
-
-The `Deployment` handle returned by `deploy()` provides `teardown()` to stop all colonies and `dashboard()` to open the live observability UI. Use `isDeployable(env)` to check if an environment supports deployment.
+Hosts are orthogonal to Environments. The environment is where signals live; the host is where colony code runs. Call `host.start(colonies)` to start and `host.stop()` to shut down. `host.dashboard()` opens the live observability UI.
 
 ## Patterns
 
@@ -432,7 +423,6 @@ Both colonies are wired to real Claude agents via `withClaudeCode`. The dashboar
 - [x] GitHub environment adapter
 - [x] Remote environment adapter
 - [x] `mandible()` DSL with environment-based deployment
-- [x] `Deployable` interface for environment-driven deploy/teardown
 - [ ] `@mandible-ai/cloud` — deploy to Edera zones via Mandible Cloud
 - [ ] `create-mandible` starter template
 - [ ] Dashboard GIF + landing page

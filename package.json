@@ -36,6 +36,11 @@
       "import": "./dist/src/environments/remote/index.js",
       "default": "./dist/src/environments/remote/index.js"
     },
+    "./hosts": {
+      "types": "./dist/src/hosts/index.d.ts",
+      "import": "./dist/src/hosts/index.js",
+      "default": "./dist/src/hosts/index.js"
+    },
     "./cli/server": {
       "types": "./dist/src/cli/server.d.ts",
       "import": "./dist/src/cli/server.js",

@@ -78,9 +78,8 @@ function defineColonies(env: FilesystemEnvironment) {
         ].join('\n');
       },
 
-      tools: ['file_edit', 'bash'],
+      allowedTools: ['file_edit', 'bash'],
       workingDirectory: (signal) => resolve(WORKSPACE, String(signal.payload.name)),
-      maxTokens: 4096,
 
       output: {
         type: 'artifact:shaped',

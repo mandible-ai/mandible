@@ -183,39 +183,6 @@ describe('withClaudeCode', () => {
     expect(opts.disallowedTools).toEqual(['Edit', 'Write']);
   });
 
-  it('deprecated tools field works as alias for allowedTools', async () => {
-    mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
-
-    const withClaudeCode = await loadWithClaudeCode();
-    const handler = withClaudeCode({
-      prompt: 'test',
-      tools: ['Bash', 'Read'],
-      output: { type: 'done' },
-    });
-
-    await handler(makeSignal(), makeContext());
-
-    const opts = mockQuery.mock.calls[0][0].options;
-    expect(opts.allowedTools).toEqual(['Bash', 'Read']);
-  });
-
-  it('allowedTools takes precedence over deprecated tools', async () => {
-    mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
-
-    const withClaudeCode = await loadWithClaudeCode();
-    const handler = withClaudeCode({
-      prompt: 'test',
-      allowedTools: ['Glob'],
-      tools: ['Bash', 'Read'],
-      output: { type: 'done' },
-    });
-
-    await handler(makeSignal(), makeContext());
-
-    const opts = mockQuery.mock.calls[0][0].options;
-    expect(opts.allowedTools).toEqual(['Glob']);
-  });
-
   it('calls onMessage callback for each SDK message', async () => {
     const messages = [
       { type: 'system', subtype: 'init' },

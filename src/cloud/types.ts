@@ -6,6 +6,9 @@
 // and the private Cloud API server.
 // ============================================================
 
+import type { HostResources } from '../core/types.js';
+export type { HostResources } from '../core/types.js';
+
 export interface CloudConfig {
   apiUrl: string;
   apiKey: string;
@@ -35,15 +38,10 @@ export interface DeployColonyConfig {
   claimStrategy: string;
   concurrency: number;
   config?: Record<string, unknown>;
-  resources?: ZoneResources;
+  resources?: HostResources;
 }
 
-export interface ZoneResources {
-  targetCpus?: number;
-  maxCpus?: number;
-  targetMemoryMb?: number;
-  maxMemoryMb?: number;
-}
+
 
 export interface DeployResult {
   projectId: string;
@@ -57,7 +55,7 @@ export interface DeployedColony {
   zoneId: string;
   zoneName: string;
   state: ZoneState;
-  resources: ZoneResources;
+  resources: HostResources;
   createdAt: string;
 }
 
@@ -76,7 +74,7 @@ export interface ZoneStatus {
   zoneName: string;
   colony: string;
   state: ZoneState;
-  resources: ZoneResources;
+  resources: HostResources;
   metrics?: ZoneMetrics;
   createdAt: string;
   uptimeSeconds: number;
