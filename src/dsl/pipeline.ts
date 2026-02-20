@@ -1,11 +1,11 @@
 // ============================================================
-// Pipeline DSL — Multi-Colony Orchestration
+// Mandible DSL — Multi-Colony Orchestration
 // ============================================================
 // Usage:
 //
-//   import { pipeline } from 'mandible';
+//   import { mandible } from '@mandible-ai/mandible';
 //
-//   await pipeline('code-review')
+//   await mandible('code-review')
 //     .cloud({ apiUrl: 'https://api.mandible.dev', apiKey: KEY })
 //     .colony('shaper', c => c
 //       .sense('task:ready', { unclaimed: true })
@@ -23,7 +23,7 @@
 //     .deploy();  // launches remote colonies via Cloud API
 //
 //   // Or run locally with dashboard:
-//   await pipeline('code-review')
+//   await mandible('code-review')
 //     .environment(env)
 //     .colony('shaper', c => c.sense(...).do(...))
 //     .dev({ port: 4040 });
@@ -63,7 +63,7 @@ interface ColonyEntry {
   image?: string;
 }
 
-export class PipelineBuilder {
+export class MandibleBuilder {
   private _name: string;
   private _env?: Environment;
   private _cloudConfig?: PipelineCloudConfig;
@@ -292,10 +292,10 @@ class DummyEnvironment implements Environment {
 }
 
 /**
- * Entry point for the pipeline DSL.
+ * Entry point for the mandible DSL.
  *
  * @example
- * await pipeline('my-pipeline')
+ * await mandible('my-swarm')
  *   .cloud({ apiKey: process.env.MANDIBLE_API_KEY })
  *   .colony('worker', c => c
  *     .sense('task:new')
@@ -303,6 +303,9 @@ class DummyEnvironment implements Environment {
  *   )
  *   .deploy();
  */
-export function pipeline(name: string): PipelineBuilder {
-  return new PipelineBuilder(name);
+export function mandible(name: string): MandibleBuilder {
+  return new MandibleBuilder(name);
 }
+
+/** @deprecated Use mandible() instead */
+export const pipeline = mandible;

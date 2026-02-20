@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { pipeline } from '../../src/dsl/pipeline.js';
+import { mandible } from '../../src/dsl/pipeline.js';
 import { FilesystemEnvironment } from '../../src/environments/filesystem/index.js';
 import { resolve } from 'node:path';
 import { rm, mkdir } from 'node:fs/promises';
@@ -7,13 +7,13 @@ import type { Signal, ActionContext } from '../../src/core/types.js';
 
 const TEST_ROOT = resolve('/tmp/mandible-pipeline-test');
 
-describe('pipeline DSL', () => {
+describe('mandible DSL', () => {
   it('builds colony definitions from fluent API', async () => {
     await rm(TEST_ROOT, { recursive: true, force: true });
     await mkdir(TEST_ROOT, { recursive: true });
     const env = new FilesystemEnvironment({ root: TEST_ROOT, name: 'test' });
 
-    const defs = pipeline('test-pipeline')
+    const defs = mandible('test-pipeline')
       .environment(env)
       .colony('worker-a', c => c
         .sense('task:new', { unclaimed: true })
@@ -43,7 +43,7 @@ describe('pipeline DSL', () => {
     await mkdir(TEST_ROOT, { recursive: true });
     const env = new FilesystemEnvironment({ root: TEST_ROOT, name: 'override' });
 
-    const defs = pipeline('override-test')
+    const defs = mandible('override-test')
       .colony('w', c => c
         .sense('x:y')
         .do('action', async () => {})
@@ -56,7 +56,7 @@ describe('pipeline DSL', () => {
 
   it('throws when building without environment', () => {
     expect(() => {
-      pipeline('no-env')
+      mandible('no-env')
         .colony('w', c => c.sense('x:y').do('a', async () => {}))
         .build();
     }).toThrow('requires an environment');
@@ -68,7 +68,7 @@ describe('pipeline DSL', () => {
 
     try {
       await expect(
-        pipeline('no-key')
+        mandible('no-key')
           .colony('w', c => c.sense('x:y').do('a', async () => {}))
           .deploy()
       ).rejects.toThrow('API key required');
@@ -79,7 +79,7 @@ describe('pipeline DSL', () => {
 
   it('throws when dev() called without environment', async () => {
     await expect(
-      pipeline('no-env-dev')
+      mandible('no-env-dev')
         .colony('w', c => c.sense('x:y').do('a', async () => {}))
         .dev()
     ).rejects.toThrow('requires an environment');
@@ -99,7 +99,7 @@ describe('pipeline DSL', () => {
     try {
       // deploy() will use env vars, but will fail at the HTTP call
       // We just verify it doesn't throw on missing config
-      const p = pipeline('env-test')
+      const p = mandible('env-test')
         .cloud({})
         .colony('w', c => c.sense('x:y').do('a', async () => {}));
 
@@ -119,7 +119,7 @@ describe('pipeline DSL', () => {
     await mkdir(TEST_ROOT, { recursive: true });
     const env = new FilesystemEnvironment({ root: TEST_ROOT, name: 'multi' });
 
-    const defs = pipeline('multi-colony')
+    const defs = mandible('multi-colony')
       .environment(env)
       .colony('fast', c => c
         .sense('task:quick')
