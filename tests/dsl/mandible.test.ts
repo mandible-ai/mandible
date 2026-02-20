@@ -78,7 +78,7 @@ describe('mandible DSL', () => {
     expect(isHost(host)).toBe(true);
   });
 
-  it('start() returns the host', async () => {
+  it('start() returns the host with metadata', async () => {
     const root = freshRoot();
     await mkdir(root, { recursive: true });
     const env = new FilesystemEnvironment({ root, name: 'start-test' });
@@ -89,7 +89,7 @@ describe('mandible DSL', () => {
         .sense('task:new')
         .do('process', async () => {})
       )
-      .start({ headless: true });
+      .start();
 
     expect(isHost(host)).toBe(true);
     expect(host.colonies).toHaveLength(1);
@@ -97,6 +97,11 @@ describe('mandible DSL', () => {
     expect(host.colonies[0].state).toBe('running');
     expect(host.environments).toContain(env);
     expect(typeof host.dashboard).toBe('function');
+
+    // Metadata populated after start
+    expect(host.metadata.id).toBeTruthy();
+    expect(host.metadata.startedAt).toBeInstanceOf(Date);
+    expect(host.metadata.startedAt.getTime()).toBeGreaterThan(0);
 
     await host.stop();
   });

@@ -191,7 +191,7 @@ export interface Subscription {
 // A single environment can be observed by colonies on different hosts.
 // ----------------------------------------------------------
 
-export interface Host {
+export interface Host<M extends HostMetadata = HostMetadata> {
   /** Human-readable name for this host */
   readonly name: string;
 
@@ -200,10 +200,13 @@ export interface Host {
    * The host decides how to run the colony code.
    * The colony definitions already reference their environments.
    */
-  start(colonies: ColonyDefinition[], options?: StartOptions): Promise<void>;
+  start(colonies: ColonyDefinition[]): Promise<void>;
 
   /** Stop all running colonies */
   stop(): Promise<void>;
+
+  /** Deployment metadata — populated after start() completes */
+  readonly metadata: M;
 
   /** Per-colony status (populated after start) */
   readonly colonies: Array<{ name: string; state: string; zoneId?: string }>;
@@ -212,18 +215,20 @@ export interface Host {
   readonly environments: Environment[];
 
   /** Open the live dashboard */
-  dashboard(options?: { port?: number; open?: boolean }): Promise<void>;
+  dashboard(options?: DashboardOptions): Promise<void>;
 }
 
-export interface StartOptions {
-  /** Dashboard port. Default: 4040 */
+/** Deployment metadata returned by start(). Subclassed per host type. */
+export interface HostMetadata {
+  /** Unique deployment ID */
+  id: string;
+  /** When start() completed */
+  startedAt: Date;
+}
+
+export interface DashboardOptions {
   port?: number;
-  /** Auto-open dashboard in browser. Default: true */
   open?: boolean;
-  /** Start without opening dashboard. Default: false */
-  headless?: boolean;
-  /** Colony container image (container/cloud hosts only) */
-  image?: string;
 }
 
 export interface HostResources {

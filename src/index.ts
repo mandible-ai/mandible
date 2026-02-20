@@ -50,14 +50,15 @@ export { mandible } from './dsl/mandible.js';
 
 // Host lifecycle
 export { isHost } from './core/types.js';
-export type { StartOptions, HostResources } from './core/types.js';
+export type { HostMetadata, DashboardOptions, HostResources } from './core/types.js';
 
 // Hosts — where colony code runs (the process model)
 // LocalHost and DockerHost are part of the OSS core.
 // CloudHost (Edera microVMs) lives in @mandible-ai/cloud (mandible-cloud repo).
 export { LocalHost, local } from './hosts/local.js';
+export type { LocalHostMetadata } from './hosts/local.js';
 export { DockerHost, docker } from './hosts/docker.js';
-export type { DockerHostConfig } from './hosts/docker.js';
+export type { DockerHostConfig, DockerHostMetadata } from './hosts/docker.js';
 
 // Runtime
 export { ColonyRuntime, createRuntime } from './core/runtime.js';

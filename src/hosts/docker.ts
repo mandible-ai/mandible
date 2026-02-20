@@ -8,10 +8,12 @@
 // ready, monitor, and stop.
 // ============================================================
 
+import { randomUUID } from 'node:crypto';
 import type {
   Host,
+  HostMetadata,
+  DashboardOptions,
   ColonyDefinition,
-  StartOptions,
   Environment,
   HostResources,
 } from '../core/types.js';
@@ -34,14 +36,27 @@ export interface DockerHostConfig {
   readyTimeout?: number;
 }
 
-export class DockerHost implements Host {
+export interface DockerHostMetadata extends HostMetadata {
+  /** Cloud project ID */
+  projectId: string;
+  /** Signal server WebSocket URL */
+  signalServerUrl: string;
+  /** Cloud dashboard URL */
+  dashboardUrl: string;
+  /** Per-colony zone info */
+  zones: Record<string, { zoneId: string; state: string }>;
+}
+
+export class DockerHost implements Host<DockerHostMetadata> {
   readonly name: string;
   private config: DockerHostConfig;
   private projectId?: string;
   private _colonies: Array<{ name: string; state: string; zoneId?: string }> = [];
   private _environments: Environment[] = [];
   private _colonyDefs: ColonyDefinition[] = [];
-  private _options: StartOptions = {};
+  private _metadata: DockerHostMetadata = {
+    id: '', startedAt: new Date(0), projectId: '', signalServerUrl: '', dashboardUrl: '', zones: {},
+  };
 
   constructor(config: DockerHostConfig) {
     this.name = config.name ?? 'docker';
@@ -49,10 +64,11 @@ export class DockerHost implements Host {
     this.projectId = config.project;
   }
 
+  get metadata(): DockerHostMetadata { return this._metadata; }
   get colonies(): Array<{ name: string; state: string; zoneId?: string }> { return this._colonies; }
   get environments(): Environment[] { return this._environments; }
 
-  async start(colonies: ColonyDefinition[], options: StartOptions = {}): Promise<void> {
+  async start(colonies: ColonyDefinition[]): Promise<void> {
     const { MandibleCloudClient } = await import('../cloud/client.js');
     const client = new MandibleCloudClient({
       apiUrl: this.config.apiUrl,
@@ -61,7 +77,6 @@ export class DockerHost implements Host {
     });
 
     this._colonyDefs = colonies;
-    this._options = options;
 
     // Create project if needed
     if (!this.projectId) {
@@ -72,7 +87,7 @@ export class DockerHost implements Host {
     }
 
     // Map colony definitions to deploy configs
-    const image = options.image ?? this.config.image ?? 'mandible-colony:latest';
+    const image = this.config.image ?? 'mandible-colony:latest';
     const deployConfigs: DeployColonyConfig[] = colonies.map(def => ({
       name: def.name,
       image,
@@ -119,9 +134,19 @@ export class DockerHost implements Host {
       zoneId: c.zoneId,
     }));
 
-    if (!options.headless) {
-      await this.dashboard({ port: options.port, open: options.open });
+    // Populate metadata
+    const zones: Record<string, { zoneId: string; state: string }> = {};
+    for (const c of result.colonies) {
+      zones[c.name] = { zoneId: c.zoneId, state: c.state };
     }
+    this._metadata = {
+      id: randomUUID(),
+      startedAt: new Date(),
+      projectId: this.projectId,
+      signalServerUrl: result.signalServerUrl,
+      dashboardUrl: result.dashboardUrl,
+      zones,
+    };
   }
 
   async stop(): Promise<void> {
@@ -136,9 +161,9 @@ export class DockerHost implements Host {
     this._colonies = [];
   }
 
-  async dashboard(options?: { port?: number; open?: boolean }): Promise<void> {
-    const port = options?.port ?? this._options.port ?? 4040;
-    const open = options?.open ?? this._options.open ?? true;
+  async dashboard(options?: DashboardOptions): Promise<void> {
+    const port = options?.port ?? 4040;
+    const open = options?.open ?? true;
     const { startDevServer } = await import('../cli/server.js');
     const primaryEnv = this._environments[0];
     if (!primaryEnv) throw new Error('No environments to observe');

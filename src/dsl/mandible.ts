@@ -34,12 +34,14 @@
 //     .colony('worker', c => c.sense('task:ready').do('work', handler))
 //     .start();
 //
+//   // Dashboard is opt-in after start:
+//   await host.dashboard({ port: 4040 });
+//
 // ============================================================
 
 import { ColonyBuilder, colony as colonyBuilder } from './builder.js';
 import type {
   Environment, ColonyDefinition,
-  StartOptions,
   Host,
 } from '../core/types.js';
 
@@ -84,17 +86,19 @@ export class MandibleBuilder {
   /**
    * Start colonies on the configured host.
    * What "start" means depends on the host:
-   * - local():  starts Node runtimes in the current process + dashboard
+   * - local():  starts Node runtimes in the current process
    * - docker(): launches Docker containers via Cloud API
    * - cloud():  launches Edera microVMs via Cloud API
    *
-   * Returns the host — use host.stop() to shut down.
+   * Returns the host — use host.stop() to shut down,
+   * host.dashboard() to open the live dashboard,
+   * host.metadata for deployment info.
    */
-  async start(options: StartOptions = {}): Promise<Host> {
+  async start(): Promise<Host> {
     const env = this.requireEnv();
     const host = await this.resolveHost();
     const definitions = this.buildDefinitions(env);
-    await host.start(definitions, options);
+    await host.start(definitions);
     return host;
   }
 
@@ -149,6 +153,12 @@ export class MandibleBuilder {
  *     .do('process', async (signal, ctx) => { ... })
  *   )
  *   .start();
+ *
+ * // Deployment metadata available immediately:
+ * console.log(host.metadata.id, host.metadata.startedAt);
+ *
+ * // Dashboard is opt-in:
+ * await host.dashboard({ port: 4040 });
  */
 export function mandible(name: string): MandibleBuilder {
   return new MandibleBuilder(name);
