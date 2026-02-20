@@ -48,9 +48,9 @@ export {
 export { colony } from './dsl/builder.js';
 export { mandible } from './dsl/mandible.js';
 
-// Deployment — Host-based (preferred)
+// Host lifecycle
 export { isHost } from './core/types.js';
-export type { Deployment, DeployOptions, HostResources } from './core/types.js';
+export type { StartOptions, HostResources } from './core/types.js';
 
 // Hosts — where colony code runs (the process model)
 // LocalHost and DockerHost are part of the OSS core.

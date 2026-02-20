@@ -196,21 +196,31 @@ export interface Host {
   readonly name: string;
 
   /**
-   * Deploy colony definitions. The host decides how to run the colony code.
+   * Start colony definitions on this host.
+   * The host decides how to run the colony code.
    * The colony definitions already reference their environments.
    */
-  deploy(colonies: ColonyDefinition[], options?: DeployOptions): Promise<Deployment>;
+  start(colonies: ColonyDefinition[], options?: StartOptions): Promise<void>;
 
-  /** Stop all deployed colonies */
+  /** Stop all running colonies */
   stop(): Promise<void>;
+
+  /** Per-colony status (populated after start) */
+  readonly colonies: Array<{ name: string; state: string; zoneId?: string }>;
+
+  /** The environments the colonies are observing (populated after start) */
+  readonly environments: Environment[];
+
+  /** Open the live dashboard */
+  dashboard(options?: { port?: number; open?: boolean }): Promise<void>;
 }
 
-export interface DeployOptions {
+export interface StartOptions {
   /** Dashboard port. Default: 4040 */
   port?: number;
   /** Auto-open dashboard in browser. Default: true */
   open?: boolean;
-  /** Deploy without starting dashboard. Default: false */
+  /** Start without opening dashboard. Default: false */
   headless?: boolean;
   /** Colony container image (container/cloud hosts only) */
   image?: string;
@@ -223,25 +233,14 @@ export interface HostResources {
   maxMemoryMb?: number;
 }
 
-export interface Deployment {
-  /** Per-colony deployment details */
-  colonies: Array<{ name: string; state: string; zoneId?: string }>;
-  /** Open the dashboard */
-  dashboard(options?: { port?: number; open?: boolean }): Promise<void>;
-  /** The host this deployment is running on */
-  host: Host;
-  /** The environments the colonies are observing */
-  environments: Environment[];
-}
-
 /** Type guard to check if an object is a Host */
 export function isHost(obj: unknown): obj is Host {
   return (
     typeof obj === 'object' &&
     obj !== null &&
     'name' in obj &&
-    'deploy' in obj &&
-    typeof (obj as Host).deploy === 'function' &&
+    'start' in obj &&
+    typeof (obj as Host).start === 'function' &&
     'stop' in obj &&
     typeof (obj as Host).stop === 'function'
   );

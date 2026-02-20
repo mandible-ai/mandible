@@ -12,23 +12,32 @@
 import type {
   Host,
   ColonyDefinition,
-  DeployOptions,
-  Deployment,
+  StartOptions,
   Environment,
 } from '../core/types.js';
 
 export class LocalHost implements Host {
   readonly name: string;
   private runtimes: Array<{ stop(): Promise<void>; name: string }> = [];
+  private _colonies: Array<{ name: string; state: string }> = [];
+  private _environments: Environment[] = [];
+  private _colonyDefs: ColonyDefinition[] = [];
+  private _options: StartOptions = {};
 
   constructor(options?: { name?: string }) {
     this.name = options?.name ?? 'local';
   }
 
-  async deploy(colonies: ColonyDefinition[], options: DeployOptions = {}): Promise<Deployment> {
+  get colonies(): Array<{ name: string; state: string }> { return this._colonies; }
+  get environments(): Environment[] { return this._environments; }
+
+  async start(colonies: ColonyDefinition[], options: StartOptions = {}): Promise<void> {
     const { createRuntime } = await import('../core/runtime.js');
     const { EventBus } = await import('../core/events.js');
     const eventBus = new EventBus();
+
+    this._colonyDefs = colonies;
+    this._options = options;
 
     // Start local runtimes for each colony
     for (const def of colonies) {
@@ -42,33 +51,12 @@ export class LocalHost implements Host {
     for (const def of colonies) {
       envMap.set(def.environment.name, def.environment);
     }
-    const environments = Array.from(envMap.values());
-
-    const deployment: Deployment = {
-      colonies: colonies.map(c => ({ name: c.name, state: 'running' })),
-      host: this,
-      environments,
-
-      dashboard: async (opts) => {
-        const port = opts?.port ?? options.port ?? 4040;
-        const open = opts?.open ?? options.open ?? true;
-        const { startDevServer } = await import('../cli/server.js');
-        // Use the first environment for the dashboard
-        const primaryEnv = environments[0];
-        if (!primaryEnv) throw new Error('No environments to observe');
-        await startDevServer(
-          { environment: primaryEnv, colonies, dashboard: { port, open } },
-          { port, open },
-        );
-      },
-
-    };
+    this._environments = Array.from(envMap.values());
+    this._colonies = colonies.map(c => ({ name: c.name, state: 'running' }));
 
     if (!options.headless) {
-      await deployment.dashboard({ port: options.port, open: options.open });
+      await this.dashboard({ port: options.port, open: options.open });
     }
-
-    return deployment;
   }
 
   async stop(): Promise<void> {
@@ -76,6 +64,19 @@ export class LocalHost implements Host {
       await rt.stop();
     }
     this.runtimes = [];
+    this._colonies = [];
+  }
+
+  async dashboard(options?: { port?: number; open?: boolean }): Promise<void> {
+    const port = options?.port ?? this._options.port ?? 4040;
+    const open = options?.open ?? this._options.open ?? true;
+    const { startDevServer } = await import('../cli/server.js');
+    const primaryEnv = this._environments[0];
+    if (!primaryEnv) throw new Error('No environments to observe');
+    await startDevServer(
+      { environment: primaryEnv, colonies: this._colonyDefs, dashboard: { port, open } },
+      { port, open },
+    );
   }
 }
 
@@ -87,7 +88,7 @@ export class LocalHost implements Host {
  *   .environment(env)
  *   .host(local())
  *   .colony('worker', c => c.sense('task:ready').do('work', handler))
- *   .deploy();
+ *   .start();
  */
 export function local(options?: { name?: string }): LocalHost {
   return new LocalHost(options);

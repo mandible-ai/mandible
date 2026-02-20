@@ -1,7 +1,7 @@
 // ============================================================
 // Docker Host — runs colonies as Docker containers
 // ============================================================
-// Deploys each colony as a Docker container via the Mandible
+// Starts each colony as a Docker container via the Mandible
 // Cloud API. Colonies connect to a signal server over WebSocket.
 //
 // The host manages the container lifecycle: create, wait for
@@ -11,8 +11,7 @@
 import type {
   Host,
   ColonyDefinition,
-  DeployOptions,
-  Deployment,
+  StartOptions,
   Environment,
   HostResources,
 } from '../core/types.js';
@@ -39,6 +38,10 @@ export class DockerHost implements Host {
   readonly name: string;
   private config: DockerHostConfig;
   private projectId?: string;
+  private _colonies: Array<{ name: string; state: string; zoneId?: string }> = [];
+  private _environments: Environment[] = [];
+  private _colonyDefs: ColonyDefinition[] = [];
+  private _options: StartOptions = {};
 
   constructor(config: DockerHostConfig) {
     this.name = config.name ?? 'docker';
@@ -46,13 +49,19 @@ export class DockerHost implements Host {
     this.projectId = config.project;
   }
 
-  async deploy(colonies: ColonyDefinition[], options: DeployOptions = {}): Promise<Deployment> {
+  get colonies(): Array<{ name: string; state: string; zoneId?: string }> { return this._colonies; }
+  get environments(): Environment[] { return this._environments; }
+
+  async start(colonies: ColonyDefinition[], options: StartOptions = {}): Promise<void> {
     const { MandibleCloudClient } = await import('../cloud/client.js');
     const client = new MandibleCloudClient({
       apiUrl: this.config.apiUrl,
       apiKey: this.config.apiKey,
       project: this.projectId,
     });
+
+    this._colonyDefs = colonies;
+    this._options = options;
 
     // Create project if needed
     if (!this.projectId) {
@@ -90,8 +99,8 @@ export class DockerHost implements Host {
 
     // Wait for all zones to reach running state
     const timeout = this.config.readyTimeout ?? 30_000;
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeout) {
       const zones = await client.listZones(this.projectId);
       const running = zones.filter(z => z.state === 'running');
       if (running.length >= colonies.length) break;
@@ -103,36 +112,16 @@ export class DockerHost implements Host {
     for (const def of colonies) {
       envMap.set(def.environment.name, def.environment);
     }
-    const environments = Array.from(envMap.values());
-
-    const deployment: Deployment = {
-      colonies: result.colonies.map(c => ({
-        name: c.name,
-        state: c.state,
-        zoneId: c.zoneId,
-      })),
-      host: this,
-      environments,
-
-      dashboard: async (opts) => {
-        const port = opts?.port ?? options.port ?? 4040;
-        const open = opts?.open ?? options.open ?? true;
-        const { startDevServer } = await import('../cli/server.js');
-        const primaryEnv = environments[0];
-        if (!primaryEnv) throw new Error('No environments to observe');
-        await startDevServer(
-          { environment: primaryEnv, colonies, dashboard: { port, open } },
-          { port, open },
-        );
-      },
-
-    };
+    this._environments = Array.from(envMap.values());
+    this._colonies = result.colonies.map(c => ({
+      name: c.name,
+      state: c.state,
+      zoneId: c.zoneId,
+    }));
 
     if (!options.headless) {
-      await deployment.dashboard({ port: options.port, open: options.open });
+      await this.dashboard({ port: options.port, open: options.open });
     }
-
-    return deployment;
   }
 
   async stop(): Promise<void> {
@@ -144,6 +133,19 @@ export class DockerHost implements Host {
       project: this.projectId,
     });
     await client.stop(this.projectId);
+    this._colonies = [];
+  }
+
+  async dashboard(options?: { port?: number; open?: boolean }): Promise<void> {
+    const port = options?.port ?? this._options.port ?? 4040;
+    const open = options?.open ?? this._options.open ?? true;
+    const { startDevServer } = await import('../cli/server.js');
+    const primaryEnv = this._environments[0];
+    if (!primaryEnv) throw new Error('No environments to observe');
+    await startDevServer(
+      { environment: primaryEnv, colonies: this._colonyDefs, dashboard: { port, open } },
+      { port, open },
+    );
   }
 }
 
@@ -159,7 +161,7 @@ export class DockerHost implements Host {
  *     image: 'mandible-colony:latest',
  *   }))
  *   .colony('worker', c => c.sense('task:ready').do('work', handler))
- *   .deploy();
+ *   .start();
  */
 export function docker(config: DockerHostConfig): DockerHost {
   return new DockerHost(config);

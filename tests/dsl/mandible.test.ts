@@ -65,11 +65,11 @@ describe('mandible DSL', () => {
     }).toThrow('requires an environment');
   });
 
-  it('throws when deploying without environment', async () => {
+  it('throws when starting without environment', async () => {
     await expect(
       mandible('no-env')
         .colony('w', c => c.sense('x:y').do('a', async () => {}))
-        .deploy()
+        .start()
     ).rejects.toThrow('requires an environment');
   });
 
@@ -78,27 +78,27 @@ describe('mandible DSL', () => {
     expect(isHost(host)).toBe(true);
   });
 
-  it('deploy() returns a Deployment handle', async () => {
+  it('start() returns the host', async () => {
     const root = freshRoot();
     await mkdir(root, { recursive: true });
-    const env = new FilesystemEnvironment({ root, name: 'deploy-test' });
+    const env = new FilesystemEnvironment({ root, name: 'start-test' });
 
-    const deployment = await mandible('deploy-test')
+    const host = await mandible('start-test')
       .environment(env)
       .colony('w', c => c
         .sense('task:new')
         .do('process', async () => {})
       )
-      .deploy({ headless: true });
+      .start({ headless: true });
 
-    expect(deployment.colonies).toHaveLength(1);
-    expect(deployment.colonies[0].name).toBe('w');
-    expect(deployment.colonies[0].state).toBe('running');
-    expect(isHost(deployment.host)).toBe(true);
-    expect(deployment.environments).toContain(env);
-    expect(typeof deployment.dashboard).toBe('function');
+    expect(isHost(host)).toBe(true);
+    expect(host.colonies).toHaveLength(1);
+    expect(host.colonies[0].name).toBe('w');
+    expect(host.colonies[0].state).toBe('running');
+    expect(host.environments).toContain(env);
+    expect(typeof host.dashboard).toBe('function');
 
-    await deployment.host.stop();
+    await host.stop();
   });
 
   it('supports multiple colonies with different configs', async () => {
