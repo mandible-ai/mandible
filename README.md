@@ -81,7 +81,7 @@ const deployment = await mandible('code-review')
   .deploy();
 
 // Later:
-await deployment.stop();
+await deployment.host.stop();
 ```
 
 Same DSL, different environment. The environment decides what "deploy" means.
@@ -171,7 +171,7 @@ const deployment = await mandible('pipeline-name')
   .deploy();                                      // start everything
 ```
 
-`deploy()` delegates to the environment — `FilesystemEnvironment` starts local runtimes + dashboard, `CloudEnvironment` launches Edera zones. The returned `Deployment` handle provides `stop()` and `dashboard()` methods.
+`deploy()` delegates to the environment — `FilesystemEnvironment` starts local runtimes + dashboard, `CloudEnvironment` launches Edera zones. The returned `Deployment` handle provides `dashboard()` and access to the `host` for lifecycle control.
 
 ### Colony builder
 
@@ -305,7 +305,7 @@ interface Environment {
 }
 ```
 
-Deployment is handled by Hosts, not Environments. The `Deployment` handle returned by `host.deploy()` provides `stop()` to stop all colonies and `dashboard()` to open the live observability UI.
+Deployment is handled by Hosts, not Environments. The `Deployment` handle returned by `host.deploy()` exposes the `host` for lifecycle control (`host.stop()`) and `dashboard()` to open the live observability UI.
 
 ## Patterns
 

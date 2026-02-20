@@ -228,8 +228,6 @@ export interface Deployment {
   colonies: Array<{ name: string; state: string; zoneId?: string }>;
   /** Open the dashboard */
   dashboard(options?: { port?: number; open?: boolean }): Promise<void>;
-  /** Stop all deployed colonies */
-  stop(): Promise<void>;
   /** The host this deployment is running on */
   host: Host;
   /** The environments the colonies are observing */

@@ -44,7 +44,6 @@ export class LocalHost implements Host {
     }
     const environments = Array.from(envMap.values());
 
-    const self = this;
     const deployment: Deployment = {
       colonies: colonies.map(c => ({ name: c.name, state: 'running' })),
       host: this,
@@ -63,12 +62,6 @@ export class LocalHost implements Host {
         );
       },
 
-      stop: async () => {
-        for (const rt of self.runtimes) {
-          await rt.stop();
-        }
-        self.runtimes = [];
-      },
     };
 
     if (!options.headless) {

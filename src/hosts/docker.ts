@@ -105,7 +105,6 @@ export class DockerHost implements Host {
     }
     const environments = Array.from(envMap.values());
 
-    const self = this;
     const deployment: Deployment = {
       colonies: result.colonies.map(c => ({
         name: c.name,
@@ -127,9 +126,6 @@ export class DockerHost implements Host {
         );
       },
 
-      stop: async () => {
-        await self.stop();
-      },
     };
 
     if (!options.headless) {
