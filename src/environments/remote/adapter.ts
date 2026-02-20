@@ -67,6 +67,7 @@ export class RemoteEnvironment implements Environment {
   private authenticated = false;
   private pending = new Map<string, PendingRequest>();
   private subscriptions = new Map<string, SubscriptionEntry>();
+  private eventListeners: Array<(event: RuntimeEventData) => void> = [];
   private idCounter = 0;
   private reconnectAttempts = 0;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
@@ -243,6 +244,11 @@ export class RemoteEnvironment implements Environment {
         pending.reject(new Error(`[${msg.code}] ${msg.message}`));
       } else {
         pending.resolve(msg.data);
+      }
+    } else if (msg.type === 'event') {
+      const eventMsg = msg as { type: 'event'; data: RuntimeEventData };
+      for (const listener of this.eventListeners) {
+        try { listener(eventMsg.data); } catch { /* don't crash */ }
       }
     } else if (msg.type === 'signal') {
       const push = msg as SignalPush;
@@ -431,6 +437,13 @@ export class RemoteEnvironment implements Environment {
   // ----------------------------------------------------------
   // Event forwarding (colony → signal server → dashboard)
   // ----------------------------------------------------------
+
+  onEvent(listener: (event: RuntimeEventData) => void): () => void {
+    this.eventListeners.push(listener);
+    return () => {
+      this.eventListeners = this.eventListeners.filter(l => l !== listener);
+    };
+  }
 
   emitEvent(event: RuntimeEventData): void {
     if (this.ws?.readyState !== WebSocket.OPEN) return;

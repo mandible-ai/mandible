@@ -25,9 +25,9 @@ import { EventBus } from '../../src/core/events.js';
 import { startDevServer } from '../../src/cli/server.js';
 import type { Signal, ActionContext, ColonyDefinition } from '../../src/core/types.js';
 
-const SIGNAL_SERVER_URL = process.env.MANDIBLE_SIGNAL_SERVER ?? 'ws://localhost:8080/v1/signals';
-const API_KEY = process.env.MANDIBLE_API_KEY ?? 'replace-with-your-api-key';
-const PROJECT = process.env.MANDIBLE_PROJECT ?? 'demo';
+const SIGNAL_SERVER_URL = process.env.MANDIBLE_SIGNAL_SERVER ?? 'wss://api.mandible.dev/v1/signals';
+const API_KEY = process.env.MANDIBLE_API_KEY ?? '';
+const PROJECT = process.env.MANDIBLE_PROJECT ?? '';
 const DASHBOARD_PORT = parseInt(process.env.DASHBOARD_PORT ?? '4040', 10);
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }

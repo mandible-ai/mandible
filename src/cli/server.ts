@@ -130,6 +130,22 @@ export async function startDevServer(
     }
   });
 
+  // Listen for remote events relayed through the signal server
+  if ('onEvent' in config.environment && typeof (config.environment as any).onEvent === 'function') {
+    (config.environment as any).onEvent((event: RuntimeEventData) => {
+      recentEvents.push(event);
+      if (recentEvents.length > MAX_RECENT) {
+        recentEvents.splice(0, recentEvents.length - MAX_RECENT);
+      }
+      const message = JSON.stringify({ type: 'event', data: event });
+      for (const client of wss.clients) {
+        if (client.readyState === 1) {
+          client.send(message);
+        }
+      }
+    });
+  }
+
   // Periodic snapshot broadcast (for concentration decay animation)
   const snapshotInterval = setInterval(async () => {
     try {

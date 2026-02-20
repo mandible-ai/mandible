@@ -111,11 +111,17 @@ export interface EventForward {
 // Server → Client messages
 // ----------------------------------------------------------
 
+export interface EventRelayMessage {
+  type: 'event';
+  data: import('../../core/events.js').RuntimeEventData;
+}
+
 export type ServerMessage =
   | ResultMessage
   | ErrorMessage
   | SignalPush
-  | AuthenticatedMessage;
+  | AuthenticatedMessage
+  | EventRelayMessage;
 
 export interface ResultMessage {
   type: 'result';
