@@ -51,6 +51,7 @@ export class DockerHost implements Host<DockerHostMetadata> {
   readonly name: string;
   private config: DockerHostConfig;
   private projectId?: string;
+  private client?: import('../cloud/client.js').MandibleCloudClient;
   private _colonies: Array<{ name: string; state: string; zoneId?: string }> = [];
   private _environments: Environment[] = [];
   private _colonyDefs: ColonyDefinition[] = [];
@@ -70,11 +71,12 @@ export class DockerHost implements Host<DockerHostMetadata> {
 
   async start(colonies: ColonyDefinition[]): Promise<void> {
     const { MandibleCloudClient } = await import('../cloud/client.js');
-    const client = new MandibleCloudClient({
+    this.client = new MandibleCloudClient({
       apiUrl: this.config.apiUrl,
       apiKey: this.config.apiKey,
       project: this.projectId,
     });
+    const client = this.client;
 
     this._colonyDefs = colonies;
 
@@ -150,14 +152,8 @@ export class DockerHost implements Host<DockerHostMetadata> {
   }
 
   async stop(): Promise<void> {
-    if (!this.projectId) return;
-    const { MandibleCloudClient } = await import('../cloud/client.js');
-    const client = new MandibleCloudClient({
-      apiUrl: this.config.apiUrl,
-      apiKey: this.config.apiKey,
-      project: this.projectId,
-    });
-    await client.stop(this.projectId);
+    if (!this.projectId || !this.client) return;
+    await this.client.stop(this.projectId);
     this._colonies = [];
   }
 
