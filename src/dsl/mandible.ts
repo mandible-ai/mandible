@@ -26,13 +26,11 @@
 //     .deploy();
 //
 //   // Cloud deployment — same environments, different host:
-//   import { RemoteEnvironment } from '@mandible-ai/mandible';
-//   import { cloud } from '@mandible-ai/mandible';
+//   import { cloud } from '@mandible-ai/cloud';
 //
-//   const signals = new RemoteEnvironment({ url: WSS_URL, apiKey: KEY, project: 'review' });
 //   await mandible('review')
-//     .environment(signals)
-//     .host(cloud({ apiKey: CLOUD_KEY }))
+//     .environment(env)                // same environment, real signal substrate
+//     .host(cloud({ apiKey: CLOUD_KEY })) // colonies run in Edera microVMs
 //     .colony('worker', c => c.sense('task:ready').do('work', handler))
 //     .deploy();
 //
