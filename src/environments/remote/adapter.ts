@@ -29,6 +29,7 @@ import type {
 } from './protocol.js';
 
 export interface RemoteEnvConfig {
+  /** Signal server WebSocket URL */
   url: string;
   apiKey: string;
   project: string;
@@ -450,6 +451,11 @@ export class RemoteEnvironment implements Environment {
     try {
       this.send({ type: 'event', data: event });
     } catch { /* best effort */ }
+  }
+
+  /** The project ID this environment is connected to */
+  get project(): string {
+    return this.config.project;
   }
 }
 

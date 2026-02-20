@@ -180,6 +180,47 @@ export interface Subscription {
   unsubscribe(): void;
 }
 
+/**
+ * Optional interface for environments that support deploying colonies.
+ * Each environment implements this differently:
+ * - FilesystemEnvironment: starts local runtimes
+ * - RemoteEnvironment: calls Cloud API to launch Edera zones
+ * - DoltEnvironment: connects to database, starts local runtimes
+ */
+export interface Deployable {
+  /** Deploy colony definitions into this environment */
+  deploy(colonies: ColonyDefinition[], options?: DeployOptions): Promise<Deployment>;
+  /** Tear down all deployed colonies */
+  teardown(): Promise<void>;
+}
+
+export interface DeployOptions {
+  /** Dashboard port. Default: 4040 */
+  port?: number;
+  /** Auto-open dashboard in browser. Default: true */
+  open?: boolean;
+  /** Deploy without starting dashboard. Default: false */
+  headless?: boolean;
+  /** Colony container image (remote environments only) */
+  image?: string;
+}
+
+export interface Deployment {
+  /** Per-colony deployment details */
+  colonies: Array<{ name: string; state: string }>;
+  /** Open the dashboard */
+  dashboard(options?: { port?: number; open?: boolean }): Promise<void>;
+  /** Tear down all deployed colonies and clean up */
+  teardown(): Promise<void>;
+  /** The environment this deployment is running in */
+  environment: Environment;
+}
+
+/** Type guard for environments that support deployment */
+export function isDeployable(env: Environment): env is Environment & Deployable {
+  return 'deploy' in env && typeof (env as any).deploy === 'function';
+}
+
 export interface DecayResult {
   /** Number of signals that had their concentration reduced */
   decayed: number;

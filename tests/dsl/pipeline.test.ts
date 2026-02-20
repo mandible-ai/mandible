@@ -1,19 +1,21 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { mandible } from '../../src/dsl/pipeline.js';
 import { FilesystemEnvironment } from '../../src/environments/filesystem/index.js';
+import { isDeployable } from '../../src/core/types.js';
 import { resolve } from 'node:path';
-import { rm, mkdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import type { Signal, ActionContext } from '../../src/core/types.js';
 
-const TEST_ROOT = resolve('/tmp/mandible-pipeline-test');
+let testN = 0;
+function freshRoot() { return resolve(`/tmp/mandible-dsl-test-${process.pid}-${++testN}`); }
 
 describe('mandible DSL', () => {
   it('builds colony definitions from fluent API', async () => {
-    await rm(TEST_ROOT, { recursive: true, force: true });
-    await mkdir(TEST_ROOT, { recursive: true });
-    const env = new FilesystemEnvironment({ root: TEST_ROOT, name: 'test' });
+    const root = freshRoot();
+    await mkdir(root, { recursive: true });
+    const env = new FilesystemEnvironment({ root, name: 'test' });
 
-    const defs = mandible('test-pipeline')
+    const defs = mandible('test')
       .environment(env)
       .colony('worker-a', c => c
         .sense('task:new', { unclaimed: true })
@@ -39,9 +41,9 @@ describe('mandible DSL', () => {
   });
 
   it('build() accepts env override', async () => {
-    await rm(TEST_ROOT, { recursive: true, force: true });
-    await mkdir(TEST_ROOT, { recursive: true });
-    const env = new FilesystemEnvironment({ root: TEST_ROOT, name: 'override' });
+    const root = freshRoot();
+    await mkdir(root, { recursive: true });
+    const env = new FilesystemEnvironment({ root, name: 'override' });
 
     const defs = mandible('override-test')
       .colony('w', c => c
@@ -62,62 +64,46 @@ describe('mandible DSL', () => {
     }).toThrow('requires an environment');
   });
 
-  it('throws when deploying without API key', async () => {
-    const original = process.env.MANDIBLE_API_KEY;
-    delete process.env.MANDIBLE_API_KEY;
-
-    try {
-      await expect(
-        mandible('no-key')
-          .colony('w', c => c.sense('x:y').do('a', async () => {}))
-          .deploy({ headless: true })
-      ).rejects.toThrow('API key required');
-    } finally {
-      if (original) process.env.MANDIBLE_API_KEY = original;
-    }
-  });
-
-  it('throws when dev() called without environment', async () => {
+  it('throws when deploying without environment', async () => {
     await expect(
-      mandible('no-env-dev')
+      mandible('no-env')
         .colony('w', c => c.sense('x:y').do('a', async () => {}))
-        .dev()
+        .deploy()
     ).rejects.toThrow('requires an environment');
   });
 
-  it('cloud() picks up env vars', () => {
-    const original = {
-      url: process.env.MANDIBLE_API_URL,
-      key: process.env.MANDIBLE_API_KEY,
-      project: process.env.MANDIBLE_PROJECT,
-    };
+  it('FilesystemEnvironment is deployable', () => {
+    const env = new FilesystemEnvironment({ root: freshRoot(), name: 'test' });
+    expect(isDeployable(env)).toBe(true);
+  });
 
-    process.env.MANDIBLE_API_URL = 'https://custom.api.dev';
-    process.env.MANDIBLE_API_KEY = 'test-key-123';
-    process.env.MANDIBLE_PROJECT = 'proj_test';
+  it('deploy() returns a Deployment with teardown', async () => {
+    const root = freshRoot();
+    await mkdir(root, { recursive: true });
+    const env = new FilesystemEnvironment({ root, name: 'deploy-test' });
 
-    try {
-      // deploy() will use env vars, but will fail at the HTTP call
-      // We just verify it doesn't throw on missing config
-      const p = mandible('env-test')
-        .cloud({})
-        .colony('w', c => c.sense('x:y').do('a', async () => {}));
+    const deployment = await mandible('deploy-test')
+      .environment(env)
+      .colony('w', c => c
+        .sense('task:new')
+        .do('process', async () => {})
+      )
+      .deploy({ headless: true });
 
-      // Build should work (cloud config doesn't affect build)
-      const env = new FilesystemEnvironment({ root: TEST_ROOT, name: 'env-test' });
-      const defs = p.build(env);
-      expect(defs).toHaveLength(1);
-    } finally {
-      process.env.MANDIBLE_API_URL = original.url;
-      process.env.MANDIBLE_API_KEY = original.key;
-      process.env.MANDIBLE_PROJECT = original.project;
-    }
+    expect(deployment.colonies).toHaveLength(1);
+    expect(deployment.colonies[0].name).toBe('w');
+    expect(deployment.colonies[0].state).toBe('running');
+    expect(deployment.environment).toBe(env);
+    expect(typeof deployment.teardown).toBe('function');
+    expect(typeof deployment.dashboard).toBe('function');
+
+    await deployment.teardown();
   });
 
   it('supports multiple colonies with different configs', async () => {
-    await rm(TEST_ROOT, { recursive: true, force: true });
-    await mkdir(TEST_ROOT, { recursive: true });
-    const env = new FilesystemEnvironment({ root: TEST_ROOT, name: 'multi' });
+    const root = freshRoot();
+    await mkdir(root, { recursive: true });
+    const env = new FilesystemEnvironment({ root, name: 'multi' });
 
     const defs = mandible('multi-colony')
       .environment(env)

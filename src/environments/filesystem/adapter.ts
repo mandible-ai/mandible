@@ -22,7 +22,8 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { watch } from 'node:fs';
 import type {
-  Environment, Signal, SignalQuery, Subscription, DecayResult, SignalMeta
+  Environment, Signal, SignalQuery, Subscription, DecayResult, SignalMeta,
+  Deployable, ColonyDefinition, DeployOptions, Deployment,
 } from '../../core/types.js';
 import {
   createSignal, matchesQuery, decayConcentration, isExpired, isClaimExpired
@@ -36,7 +37,7 @@ export interface FilesystemEnvConfig {
   name?: string;
 }
 
-export class FilesystemEnvironment implements Environment {
+export class FilesystemEnvironment implements Environment, Deployable {
   readonly name: string;
   private root: string;
   private signalsDir: string;
@@ -349,5 +350,60 @@ export class FilesystemEnvironment implements Environment {
     } catch {
       return [];
     }
+  }
+
+  // ----------------------------------------------------------
+  // Deployable — local runtimes + dashboard
+  // ----------------------------------------------------------
+
+  private runtimes: Array<{ stop(): Promise<void>; name: string }> = [];
+
+  async deploy(colonies: ColonyDefinition[], options: DeployOptions = {}): Promise<Deployment> {
+    const { createRuntime } = await import('../../core/runtime.js');
+    const { EventBus } = await import('../../core/events.js');
+    const eventBus = new EventBus();
+
+    // Create and start local runtimes
+    for (const def of colonies) {
+      const runtime = createRuntime({ ...def, environment: this }, { eventBus });
+      this.runtimes.push(runtime);
+      await runtime.start();
+    }
+
+    const self = this;
+    const deployment: Deployment = {
+      colonies: colonies.map(c => ({ name: c.name, state: 'running' })),
+      environment: this,
+
+      dashboard: async (opts) => {
+        const port = opts?.port ?? options.port ?? 4040;
+        const open = opts?.open ?? options.open ?? true;
+        const { startDevServer } = await import('../../cli/server.js');
+        await startDevServer(
+          { environment: self, colonies, dashboard: { port, open } },
+          { port, open },
+        );
+      },
+
+      teardown: async () => {
+        for (const rt of self.runtimes) {
+          await rt.stop();
+        }
+        self.runtimes = [];
+      },
+    };
+
+    if (!options.headless) {
+      await deployment.dashboard({ port: options.port, open: options.open });
+    }
+
+    return deployment;
+  }
+
+  async teardown(): Promise<void> {
+    for (const rt of this.runtimes) {
+      await rt.stop();
+    }
+    this.runtimes = [];
   }
 }
