@@ -47,6 +47,25 @@ export interface PipelineDeployOptions {
   project?: string;
   image?: string;
   dashboard?: boolean | { port?: number };
+  /** If true, don't auto-start dashboard. Just deploy and return the handle. */
+  headless?: boolean;
+}
+
+export interface Deployment {
+  /** Project ID for this deployment */
+  projectId: string;
+  /** Signal server URL colonies are connected to */
+  signalServerUrl: string;
+  /** Per-colony deployment details */
+  colonies: DeployResult['colonies'];
+  /** Cloud API client for further operations */
+  client: MandibleCloudClient;
+  /** Remote environment connected to the signal server */
+  environment: RemoteEnvironment;
+  /** Tear down all zones and clean up */
+  teardown(): Promise<void>;
+  /** Open the dashboard for this deployment */
+  dashboard(options?: { port?: number; open?: boolean }): Promise<void>;
 }
 
 export interface PipelineDevOptions {
@@ -97,10 +116,10 @@ export class MandibleBuilder {
 
   /**
    * Deploy colonies to Mandible Cloud (Edera zones).
-   * Creates a project if needed, deploys all colonies, and optionally
-   * starts a local dashboard connected to the remote signal server.
+   * Creates a project if needed, deploys all colonies, and returns
+   * a Deployment handle for observability and lifecycle management.
    */
-  async deploy(options: PipelineDeployOptions = {}): Promise<DeployResult> {
+  async deploy(options: PipelineDeployOptions = {}): Promise<Deployment> {
     const cloud = this.requireCloud();
     const client = new MandibleCloudClient({
       apiUrl: cloud.apiUrl!,
@@ -125,7 +144,6 @@ export class MandibleBuilder {
     // Build deploy request from colony definitions
     const deployColonies: DeployColonyConfig[] = this._colonies.map(entry => {
       const builder = entry.configurator(colonyBuilder(entry.name));
-      // Build temporarily with a dummy env to extract config
       const tempEnv = this._env ?? new DummyEnvironment();
       const def = builder.in(tempEnv).build();
 
@@ -154,21 +172,61 @@ export class MandibleBuilder {
       console.log(`    + ${col.name} [${col.state}] zone=${col.zoneId}`);
     }
 
-    // Optionally start dashboard connected to remote environment
-    if (options.dashboard !== false) {
+    // Connect a remote environment for observability
+    const env = new RemoteEnvironment({
+      url: signalServerUrl!,
+      apiKey: cloud.apiKey!,
+      project: projectId,
+      name: `dashboard:${this._name}`,
+    });
+    await env.connect();
+
+    const colonyNames = this._colonies.map(c => c.name);
+
+    const deployment: Deployment = {
+      projectId,
+      signalServerUrl: signalServerUrl!,
+      colonies: result.colonies,
+      client,
+      environment: env,
+
+      teardown: async () => {
+        console.log(`  tearing down ${colonyNames.length} colonies...`);
+        await client.teardown(projectId);
+        await env.close();
+        console.log('  done.');
+      },
+
+      dashboard: async (opts) => {
+        const port = opts?.port ?? 4040;
+        const open = opts?.open ?? true;
+
+        const definitions: ColonyDefinition[] = colonyNames.map(name => ({
+          name,
+          environment: env,
+          sensors: [],
+          rules: [],
+          concurrency: 0,
+          claimStrategy: 'none' as const,
+        }));
+
+        const { startDevServer } = await import('../cli/server.js');
+        await startDevServer(
+          { environment: env, colonies: definitions, dashboard: { port, open } },
+          { port, open },
+        );
+      },
+    };
+
+    // Auto-start dashboard unless headless
+    if (!options.headless && options.dashboard !== false) {
       const dashPort = typeof options.dashboard === 'object'
         ? options.dashboard.port ?? 4040
         : 4040;
-
-      await this.startRemoteDashboard(
-        signalServerUrl!,
-        cloud.apiKey!,
-        projectId,
-        dashPort,
-      );
+      await deployment.dashboard({ port: dashPort });
     }
 
-    return result;
+    return deployment;
   }
 
   /**
@@ -212,41 +270,6 @@ export class MandibleBuilder {
       const builder = entry.configurator(colonyBuilder(entry.name));
       return builder.in(targetEnv).build();
     });
-  }
-
-  /** Connect to a remote signal server and start a dashboard showing remote colony events */
-  private async startRemoteDashboard(
-    signalServerUrl: string,
-    apiKey: string,
-    project: string,
-    port: number,
-  ): Promise<void> {
-    const env = new RemoteEnvironment({
-      url: signalServerUrl,
-      apiKey,
-      project,
-      name: `dashboard:${this._name}`,
-    });
-
-    await env.connect();
-    console.log(`  connected to signal server`);
-
-    // Build dummy definitions for the dashboard (no local processing)
-    const definitions: ColonyDefinition[] = this._colonies.map(entry => ({
-      name: entry.name,
-      environment: env,
-      sensors: [],
-      rules: [],
-      concurrency: 0,
-      claimStrategy: 'none' as const,
-    }));
-
-    const { startDevServer } = await import('../cli/server.js');
-
-    await startDevServer(
-      { environment: env, colonies: definitions, dashboard: { port, open: true } },
-      { port, open: true },
-    );
   }
 
   private requireCloud(): Required<Pick<PipelineCloudConfig, 'apiUrl'>> & PipelineCloudConfig {

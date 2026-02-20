@@ -70,7 +70,7 @@ describe('mandible DSL', () => {
       await expect(
         mandible('no-key')
           .colony('w', c => c.sense('x:y').do('a', async () => {}))
-          .deploy()
+          .deploy({ headless: true })
       ).rejects.toThrow('API key required');
     } finally {
       if (original) process.env.MANDIBLE_API_KEY = original;
