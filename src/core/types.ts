@@ -201,8 +201,8 @@ export interface Host {
    */
   deploy(colonies: ColonyDefinition[], options?: DeployOptions): Promise<Deployment>;
 
-  /** Tear down all deployed colonies */
-  teardown(): Promise<void>;
+  /** Stop all deployed colonies */
+  stop(): Promise<void>;
 }
 
 export interface DeployOptions {
@@ -228,8 +228,8 @@ export interface Deployment {
   colonies: Array<{ name: string; state: string; zoneId?: string }>;
   /** Open the dashboard */
   dashboard(options?: { port?: number; open?: boolean }): Promise<void>;
-  /** Tear down all deployed colonies and clean up */
-  teardown(): Promise<void>;
+  /** Stop all deployed colonies */
+  stop(): Promise<void>;
   /** The host this deployment is running on */
   host: Host;
   /** The environments the colonies are observing */
@@ -244,8 +244,8 @@ export function isHost(obj: unknown): obj is Host {
     'name' in obj &&
     'deploy' in obj &&
     typeof (obj as Host).deploy === 'function' &&
-    'teardown' in obj &&
-    typeof (obj as Host).teardown === 'function'
+    'stop' in obj &&
+    typeof (obj as Host).stop === 'function'
   );
 }
 

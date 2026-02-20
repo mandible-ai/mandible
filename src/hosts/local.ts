@@ -63,7 +63,7 @@ export class LocalHost implements Host {
         );
       },
 
-      teardown: async () => {
+      stop: async () => {
         for (const rt of self.runtimes) {
           await rt.stop();
         }
@@ -78,7 +78,7 @@ export class LocalHost implements Host {
     return deployment;
   }
 
-  async teardown(): Promise<void> {
+  async stop(): Promise<void> {
     for (const rt of this.runtimes) {
       await rt.stop();
     }

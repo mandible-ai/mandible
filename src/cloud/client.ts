@@ -72,7 +72,7 @@ export class MandibleCloudClient {
     return this.del(`/v1/projects/${projectId ?? this.requireProject()}/colonies/${colonyName}`);
   }
 
-  async teardown(projectId?: string): Promise<void> {
+  async stop(projectId?: string): Promise<void> {
     const colonies = await this.listColonies(projectId);
     for (const colony of colonies) {
       await this.destroyColony(colony.name, projectId);

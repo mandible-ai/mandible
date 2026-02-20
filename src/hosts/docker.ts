@@ -5,7 +5,7 @@
 // Cloud API. Colonies connect to a signal server over WebSocket.
 //
 // The host manages the container lifecycle: create, wait for
-// ready, monitor, and teardown.
+// ready, monitor, and stop.
 // ============================================================
 
 import type {
@@ -127,8 +127,8 @@ export class DockerHost implements Host {
         );
       },
 
-      teardown: async () => {
-        await self.teardown();
+      stop: async () => {
+        await self.stop();
       },
     };
 
@@ -139,7 +139,7 @@ export class DockerHost implements Host {
     return deployment;
   }
 
-  async teardown(): Promise<void> {
+  async stop(): Promise<void> {
     if (!this.projectId) return;
     const { MandibleCloudClient } = await import('../cloud/client.js');
     const client = new MandibleCloudClient({
@@ -147,7 +147,7 @@ export class DockerHost implements Host {
       apiKey: this.config.apiKey,
       project: this.projectId,
     });
-    await client.teardown(this.projectId);
+    await client.stop(this.projectId);
   }
 }
 

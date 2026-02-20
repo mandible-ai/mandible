@@ -78,7 +78,7 @@ describe('mandible DSL', () => {
     expect(isHost(host)).toBe(true);
   });
 
-  it('deploy() returns a Deployment with teardown', async () => {
+  it('deploy() returns a Deployment with stop', async () => {
     const root = freshRoot();
     await mkdir(root, { recursive: true });
     const env = new FilesystemEnvironment({ root, name: 'deploy-test' });
@@ -96,10 +96,10 @@ describe('mandible DSL', () => {
     expect(deployment.colonies[0].state).toBe('running');
     expect(isHost(deployment.host)).toBe(true);
     expect(deployment.environments).toContain(env);
-    expect(typeof deployment.teardown).toBe('function');
+    expect(typeof deployment.stop).toBe('function');
     expect(typeof deployment.dashboard).toBe('function');
 
-    await deployment.teardown();
+    await deployment.stop();
   });
 
   it('supports multiple colonies with different configs', async () => {
