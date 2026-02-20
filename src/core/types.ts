@@ -180,16 +180,27 @@ export interface Subscription {
   unsubscribe(): void;
 }
 
-/**
- * Optional interface for environments that support deploying colonies.
- * Each environment implements this differently:
- * - FilesystemEnvironment: starts local runtimes
- * - RemoteEnvironment: calls Cloud API to launch Edera zones
- * - DoltEnvironment: connects to database, starts local runtimes
- */
-export interface Deployable {
-  /** Deploy colony definitions into this environment */
+// ----------------------------------------------------------
+// Host — the process model (where colony code executes)
+// ----------------------------------------------------------
+// Hosts are orthogonal to Environments:
+//   Environment = where signals live (GitHub, filesystem, Kafka, signal server)
+//   Host        = where colony code runs (local machine, Docker, Edera microVM)
+//
+// A single host can run colonies that observe multiple environments.
+// A single environment can be observed by colonies on different hosts.
+// ----------------------------------------------------------
+
+export interface Host {
+  /** Human-readable name for this host */
+  readonly name: string;
+
+  /**
+   * Deploy colony definitions. The host decides how to run the colony code.
+   * The colony definitions already reference their environments.
+   */
   deploy(colonies: ColonyDefinition[], options?: DeployOptions): Promise<Deployment>;
+
   /** Tear down all deployed colonies */
   teardown(): Promise<void>;
 }
@@ -201,22 +212,55 @@ export interface DeployOptions {
   open?: boolean;
   /** Deploy without starting dashboard. Default: false */
   headless?: boolean;
-  /** Colony container image (remote environments only) */
+  /** Colony container image (container/cloud hosts only) */
   image?: string;
 }
 
 export interface Deployment {
   /** Per-colony deployment details */
-  colonies: Array<{ name: string; state: string }>;
+  colonies: Array<{ name: string; state: string; zoneId?: string }>;
   /** Open the dashboard */
   dashboard(options?: { port?: number; open?: boolean }): Promise<void>;
   /** Tear down all deployed colonies and clean up */
   teardown(): Promise<void>;
-  /** The environment this deployment is running in */
-  environment: Environment;
+  /** The host this deployment is running on */
+  host: Host;
+  /** The environments the colonies are observing */
+  environments: Environment[];
 }
 
-/** Type guard for environments that support deployment */
+/** Type guard to check if an object is a Host */
+export function isHost(obj: unknown): obj is Host {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'name' in obj &&
+    'deploy' in obj &&
+    typeof (obj as Host).deploy === 'function' &&
+    'teardown' in obj &&
+    typeof (obj as Host).teardown === 'function'
+  );
+}
+
+// ----------------------------------------------------------
+// Deprecated: Deployable on Environment
+// ----------------------------------------------------------
+// Kept for backward compatibility. Prefer using Host instead.
+// ----------------------------------------------------------
+
+/**
+ * @deprecated Use the Host interface instead. Environments should only
+ * model the signal substrate, not the process model.
+ */
+export interface Deployable {
+  deploy(colonies: ColonyDefinition[], options?: DeployOptions): Promise<Deployment>;
+  teardown(): Promise<void>;
+}
+
+/**
+ * @deprecated Use isHost() instead. Deployment should go through a Host,
+ * not be coupled to the Environment.
+ */
 export function isDeployable(env: Environment): env is Environment & Deployable {
   return 'deploy' in env && typeof (env as any).deploy === 'function';
 }

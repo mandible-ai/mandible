@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { mandible } from '../../src/dsl/mandible.js';
 import { FilesystemEnvironment } from '../../src/environments/filesystem/index.js';
-import { isDeployable } from '../../src/core/types.js';
+import { isHost } from '../../src/core/types.js';
+import { LocalHost } from '../../src/hosts/local.js';
 import { resolve } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import type { Signal, ActionContext } from '../../src/core/types.js';
@@ -72,9 +73,9 @@ describe('mandible DSL', () => {
     ).rejects.toThrow('requires an environment');
   });
 
-  it('FilesystemEnvironment is deployable', () => {
-    const env = new FilesystemEnvironment({ root: freshRoot(), name: 'test' });
-    expect(isDeployable(env)).toBe(true);
+  it('LocalHost is a valid Host', () => {
+    const host = new LocalHost();
+    expect(isHost(host)).toBe(true);
   });
 
   it('deploy() returns a Deployment with teardown', async () => {
@@ -93,7 +94,8 @@ describe('mandible DSL', () => {
     expect(deployment.colonies).toHaveLength(1);
     expect(deployment.colonies[0].name).toBe('w');
     expect(deployment.colonies[0].state).toBe('running');
-    expect(deployment.environment).toBe(env);
+    expect(isHost(deployment.host)).toBe(true);
+    expect(deployment.environments).toContain(env);
     expect(typeof deployment.teardown).toBe('function');
     expect(typeof deployment.dashboard).toBe('function');
 

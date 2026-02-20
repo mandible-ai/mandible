@@ -22,6 +22,8 @@ export type {
   RuntimeStats,
   RuntimeEvent,
   DecayPolicy,
+  // Host — the process model (where colony code runs)
+  Host,
   // Provenance & Trust types
   TrustLevel,
   Attestation,
@@ -46,9 +48,23 @@ export {
 export { colony } from './dsl/builder.js';
 export { mandible, pipeline } from './dsl/mandible.js';
 
-// Deployment
+// Deployment — Host-based (preferred)
+export { isHost } from './core/types.js';
+export type { Deployment, DeployOptions } from './core/types.js';
+
+// Hosts — where colony code runs (the process model)
+// LocalHost and DockerHost are part of the OSS core.
+// CloudHost (Edera microVMs) lives in @mandible-ai/cloud (paid PaaS):
+//   import { CloudHost, cloud } from '@mandible-ai/mandible/cloud';
+export { LocalHost, local } from './hosts/local.js';
+export { DockerHost, docker } from './hosts/docker.js';
+export type { DockerHostConfig } from './hosts/docker.js';
+
+// Deployment — Environment-based (deprecated, use Host instead)
+/** @deprecated Use isHost() and the Host interface instead */
 export { isDeployable } from './core/types.js';
-export type { Deployable, Deployment, DeployOptions } from './core/types.js';
+/** @deprecated Use Host instead of Deployable */
+export type { Deployable } from './core/types.js';
 
 // Runtime
 export { ColonyRuntime, createRuntime } from './core/runtime.js';
