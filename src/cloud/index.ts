@@ -11,7 +11,7 @@ export type {
   ZoneState,
   ZoneStatus,
   ZoneMetrics,
-  ZoneResources,
+  HostResources,
   ColonyStatus,
   ApiKey,
   CreateApiKeyResponse,

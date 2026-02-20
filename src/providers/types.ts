@@ -84,11 +84,6 @@ export interface ClaudeCodeConfig<T = Record<string, unknown>> {
   allowedTools?: string[];
 
   /**
-   * @deprecated Use `allowedTools` instead. Kept for backward compatibility.
-   */
-  tools?: string[];
-
-  /**
    * Tools the agent is explicitly forbidden from using.
    * Takes precedence over allowedTools.
    */
@@ -99,12 +94,6 @@ export interface ClaudeCodeConfig<T = Record<string, unknown>> {
    * Can be static or derived from the signal.
    */
   workingDirectory?: string | ((signal: Signal<T>) => string);
-
-  /**
-   * @deprecated The Claude Agent SDK does not use maxTokens directly.
-   * Use maxTurns or maxBudgetUsd to control agent scope instead.
-   */
-  maxTokens?: number;
 
   /** Maximum conversation turns before the agent stops. */
   maxTurns?: number;

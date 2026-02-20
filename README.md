@@ -305,16 +305,7 @@ interface Environment {
 }
 ```
 
-To support `mandible().deploy()`, also implement the `Deployable` interface:
-
-```typescript
-interface Deployable {
-  deploy(colonies: ColonyDefinition[], options?: DeployOptions): Promise<Deployment>;
-  teardown(): Promise<void>;
-}
-```
-
-The `Deployment` handle returned by `deploy()` provides `teardown()` to stop all colonies and `dashboard()` to open the live observability UI. Use `isDeployable(env)` to check if an environment supports deployment.
+Deployment is handled by Hosts, not Environments. The `Deployment` handle returned by `host.deploy()` provides `teardown()` to stop all colonies and `dashboard()` to open the live observability UI.
 
 ## Patterns
 
@@ -432,7 +423,6 @@ Both colonies are wired to real Claude agents via `withClaudeCode`. The dashboar
 - [x] GitHub environment adapter
 - [x] Remote environment adapter
 - [x] `mandible()` DSL with environment-based deployment
-- [x] `Deployable` interface for environment-driven deploy/teardown
 - [ ] `@mandible-ai/cloud` — deploy to Edera zones via Mandible Cloud
 - [ ] `create-mandible` starter template
 - [ ] Dashboard GIF + landing page

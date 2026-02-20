@@ -249,29 +249,6 @@ export function isHost(obj: unknown): obj is Host {
   );
 }
 
-// ----------------------------------------------------------
-// Deprecated: Deployable on Environment
-// ----------------------------------------------------------
-// Kept for backward compatibility. Prefer using Host instead.
-// ----------------------------------------------------------
-
-/**
- * @deprecated Use the Host interface instead. Environments should only
- * model the signal substrate, not the process model.
- */
-export interface Deployable {
-  deploy(colonies: ColonyDefinition[], options?: DeployOptions): Promise<Deployment>;
-  teardown(): Promise<void>;
-}
-
-/**
- * @deprecated Use isHost() instead. Deployment should go through a Host,
- * not be coupled to the Environment.
- */
-export function isDeployable(env: Environment): env is Environment & Deployable {
-  return 'deploy' in env && typeof (env as any).deploy === 'function';
-}
-
 export interface DecayResult {
   /** Number of signals that had their concentration reduced */
   decayed: number;

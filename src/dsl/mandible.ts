@@ -151,5 +151,3 @@ export function mandible(name: string): MandibleBuilder {
   return new MandibleBuilder(name);
 }
 
-/** @deprecated Use mandible() instead */
-export const pipeline = mandible;

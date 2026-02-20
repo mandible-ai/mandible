@@ -7,9 +7,7 @@
 // ============================================================
 
 import type { HostResources } from '../core/types.js';
-
-/** @deprecated Use HostResources from core/types instead */
-export type ZoneResources = HostResources;
+export type { HostResources } from '../core/types.js';
 
 export interface CloudConfig {
   apiUrl: string;
@@ -40,7 +38,7 @@ export interface DeployColonyConfig {
   claimStrategy: string;
   concurrency: number;
   config?: Record<string, unknown>;
-  resources?: ZoneResources;
+  resources?: HostResources;
 }
 
 
@@ -57,7 +55,7 @@ export interface DeployedColony {
   zoneId: string;
   zoneName: string;
   state: ZoneState;
-  resources: ZoneResources;
+  resources: HostResources;
   createdAt: string;
 }
 
@@ -76,7 +74,7 @@ export interface ZoneStatus {
   zoneName: string;
   colony: string;
   state: ZoneState;
-  resources: ZoneResources;
+  resources: HostResources;
   metrics?: ZoneMetrics;
   createdAt: string;
   uptimeSeconds: number;

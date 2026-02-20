@@ -46,7 +46,7 @@ export {
 
 // Colony DSL
 export { colony } from './dsl/builder.js';
-export { mandible, pipeline } from './dsl/mandible.js';
+export { mandible } from './dsl/mandible.js';
 
 // Deployment — Host-based (preferred)
 export { isHost } from './core/types.js';
@@ -58,12 +58,6 @@ export type { Deployment, DeployOptions, HostResources } from './core/types.js';
 export { LocalHost, local } from './hosts/local.js';
 export { DockerHost, docker } from './hosts/docker.js';
 export type { DockerHostConfig } from './hosts/docker.js';
-
-// Deployment — Environment-based (deprecated, use Host instead)
-/** @deprecated Use isHost() and the Host interface instead */
-export { isDeployable } from './core/types.js';
-/** @deprecated Use Host instead of Deployable */
-export type { Deployable } from './core/types.js';
 
 // Runtime
 export { ColonyRuntime, createRuntime } from './core/runtime.js';

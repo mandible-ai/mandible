@@ -26,7 +26,6 @@ export function withClaudeCode<T = Record<string, unknown>>(
     prompt,
     systemPrompt,
     allowedTools,
-    tools,
     disallowedTools,
     workingDirectory,
     maxTurns,
@@ -38,9 +37,6 @@ export function withClaudeCode<T = Record<string, unknown>>(
     output,
     autoWithdraw = true,
   } = config;
-
-  // Resolve allowedTools with backward compat for deprecated `tools`
-  const resolvedAllowedTools = allowedTools ?? tools;
 
   return async (signal: Signal<T>, ctx: ActionContext) => {
     // 1. Resolve the prompt
@@ -68,7 +64,7 @@ export function withClaudeCode<T = Record<string, unknown>>(
         maxBudgetUsd,
       };
 
-      if (resolvedAllowedTools) queryOptions.allowedTools = resolvedAllowedTools;
+      if (allowedTools) queryOptions.allowedTools = allowedTools;
       if (disallowedTools) queryOptions.disallowedTools = disallowedTools;
       if (maxTurns !== undefined) queryOptions.maxTurns = maxTurns;
 
