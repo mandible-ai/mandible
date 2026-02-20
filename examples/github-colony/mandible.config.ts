@@ -9,8 +9,8 @@ import type { Signal, ActionContext } from '../../src/core/types.js';
 // Config from environment variables
 // ----------------------------------------------------------
 
-const OWNER = process.env.GITHUB_OWNER ?? 'sparrowlabsdev';
-const REPO = process.env.GITHUB_REPO ?? 'sis-test';
+const OWNER = process.env.GITHUB_OWNER ?? 'your-org';
+const REPO = process.env.GITHUB_REPO ?? 'your-repo';
 const POLL_INTERVAL = 30_000;
 
 if (!process.env.GITHUB_TOKEN) {

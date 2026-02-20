@@ -12,10 +12,10 @@
 //        cd mandible-cloud && ./scripts/build-colony-dev.sh
 //   3. Start the signal server + cloud API:
 //        cd mandible-cloud
-//        PORT=9090 MANDIBLE_ADMIN_KEY=admin-dev-key go run ./cmd/signalserver &
+//        PORT=9090 MANDIBLE_ADMIN_KEY=your-admin-key go run ./cmd/signalserver &
 //        PORT=9091 MANDIBLE_SIGNAL_SERVER_URL=ws://host.docker.internal:9090/v1/signals \
 //          MANDIBLE_SIGNAL_SERVER_ADMIN_URL=http://localhost:9090 \
-//          MANDIBLE_ZONE_MODE=docker MANDIBLE_ADMIN_KEY=admin-dev-key \
+//          MANDIBLE_ZONE_MODE=docker MANDIBLE_ADMIN_KEY=your-admin-key \
 //          go run ./cmd/cloudapi &
 //
 // Then run:
@@ -29,7 +29,7 @@ import type { Signal, ActionContext, ColonyDefinition } from '../../src/core/typ
 
 const CLOUD_API = process.env.MANDIBLE_CLOUD_API ?? 'http://localhost:9091';
 const SIGNAL_SERVER = process.env.MANDIBLE_SIGNAL_SERVER ?? 'ws://localhost:9090/v1/signals';
-const ADMIN_KEY = process.env.MANDIBLE_ADMIN_KEY ?? 'admin-dev-key';
+const ADMIN_KEY = process.env.MANDIBLE_ADMIN_KEY ?? 'replace-with-your-admin-key';
 const COLONY_IMAGE = process.env.MANDIBLE_COLONY_IMAGE ?? 'mandible-colony:latest';
 const DASHBOARD_PORT = parseInt(process.env.DASHBOARD_PORT ?? '4042', 10);
 
