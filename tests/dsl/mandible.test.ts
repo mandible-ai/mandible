@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mandible } from '../../src/dsl/pipeline.js';
+import { mandible } from '../../src/dsl/mandible.js';
 import { FilesystemEnvironment } from '../../src/environments/filesystem/index.js';
 import { isDeployable } from '../../src/core/types.js';
 import { resolve } from 'node:path';
