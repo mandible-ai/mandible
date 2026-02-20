@@ -59,11 +59,59 @@ const host = await mandible('code-review')
   .start();
 ```
 
-No colony references any other colony. They coordinate entirely through signals in the environment. `start()` starts the runtimes and opens the live dashboard.
+No colony references any other colony. They coordinate entirely through signals in the environment.
 
-### Cloud deployment
+### Hosting models
 
-For production workloads, run colonies in isolated Edera microVMs via [Mandible Cloud](https://mandible.dev):
+The **environment** (where signals live) is orthogonal to the **host** (where colony code runs). Colony definitions stay the same across all hosts — only the `.host()` call changes.
+
+#### Local (default)
+
+Runs colonies as Node runtimes in the current process. This is the default when `.host()` is omitted:
+
+```typescript
+import { mandible, FilesystemEnvironment } from '@mandible-ai/mandible';
+
+const env = new FilesystemEnvironment({ root: './.mandible/signals' });
+
+const host = await mandible('code-pipeline')
+  .environment(env)
+  .colony('shaper', shaper)
+  .colony('critic', critic)
+  .colony('keeper', keeper)
+  .start();
+
+await host.stop();
+```
+
+#### Docker
+
+Runs each colony as a Docker container via the Mandible Cloud API:
+
+```typescript
+import { mandible, FilesystemEnvironment, docker } from '@mandible-ai/mandible';
+
+const env = new FilesystemEnvironment({ root: './.mandible/signals' });
+
+const host = await mandible('code-pipeline')
+  .environment(env)
+  .host(docker({
+    apiUrl: process.env.MANDIBLE_API_URL!,
+    apiKey: process.env.MANDIBLE_API_KEY!,
+    image: 'mandible-colony:latest',
+  }))
+  .colony('shaper', shaper)
+  .colony('critic', critic)
+  .colony('keeper', keeper)
+  .start();
+
+console.log(host.metadata.projectId);
+await host.stop();
+```
+
+#### Cloud (Edera microVMs)
+
+For production workloads, run colonies in isolated Edera zones via [Mandible Cloud](https://mandible.dev):
 
 ```typescript
 import { mandible, FilesystemEnvironment } from '@mandible-ai/mandible';
@@ -71,18 +119,18 @@ import { cloud } from '@mandible-ai/cloud';
 
 const env = new FilesystemEnvironment({ root: './.mandible/signals' });
 
-const host = await mandible('code-review')
+const host = await mandible('code-pipeline')
   .environment(env)
-  .host(cloud({ apiKey: process.env.MANDIBLE_API_KEY, project: 'code-review' }))
-  .colony('shaper', c => c.sense('task:ready').do('shape', shapeHandler))
-  .colony('critic', c => c.sense('artifact:shaped').do('review', reviewHandler))
+  .host(cloud({ apiKey: process.env.MANDIBLE_API_KEY!, project: 'code-review' }))
+  .colony('shaper', shaper)
+  .colony('critic', critic)
+  .colony('keeper', keeper)
   .start();
 
-// Later:
 await host.stop();
 ```
 
-Same DSL, same environment, different host. The host decides where colony code runs.
+Same colonies, same environment, different host.
 
 ### Run with the dashboard
 
@@ -158,7 +206,7 @@ Other colonies sense those deposited signals and the cycle continues. Complex wo
 The `mandible()` function is the top-level entry point for defining and starting multi-colony systems:
 
 ```typescript
-const host = await mandible('pipeline-name')
+const host = await mandible('my-swarm')
   .environment(env)                               // where colonies operate
   .colony('name', c => c                          // define a colony inline
     .sense('type:pattern', { unclaimed: true })   // what to watch for
@@ -180,7 +228,10 @@ colony('name')
   .in(env)                                        // which environment
   .sense('type:pattern', { unclaimed: true })     // what to watch for
   .when(signal => signal.payload.priority > 0)    // optional guard
-  .do(withClaudeCode({ allowedTools: ['Read', 'Write'] }))  // action provider
+  .do('shape', withClaudeCode({                   // action provider
+    prompt: signal => `Implement: ${signal.payload.name}`,
+    allowedTools: ['Read', 'Write'],
+  }))
   .concurrency(3)                                 // max parallel agents
   .claim('lease', 30_000)                         // claim strategy
   .poll(2000)                                     // sensor poll interval (ms)
@@ -376,12 +427,17 @@ src/
 
 tests/
   core/                 Signal, runtime, attestation tests
-  environments/         Filesystem, GitHub, remote adapter tests
+  environments/         Filesystem, GitHub adapter tests
+  dsl/                  DSL and mandible() builder tests
   providers/            Agent, structured output, bash provider tests
   colonies/             Integration tests for colony workflows
 
 examples/
-  code-pipeline/        Shaper → Critic → Keeper pipeline demo
+  code-pipeline/
+    colonies.ts         Shared colony definitions (shaper, critic, keeper)
+    index.ts            Local host — runs in current process
+    docker.ts           Docker host — runs as containers
+    with-providers.ts   Real LLM providers (Claude Code, Anthropic, Bash)
   repo-maintenance/     Scout + Fixer repo maintenance demo
 ```
 
@@ -389,16 +445,26 @@ examples/
 
 ### Code pipeline
 
-The included demo seeds 5 coding tasks into a filesystem environment. Three colonies self-organize to process them:
+Three colonies coordinate through a shared filesystem environment:
 
-- **Shaper** (concurrency: 2) — picks up `task:ready` signals, produces `task:shaped` signals
-- **Critic** (concurrency: 2) — reviews shaped artifacts, deposits `review:approved` or `review:rejected`
-- **Keeper** (concurrency: 1) — commits approved work, deposits `task:complete`
+- **Shaper** (concurrency: 2) — picks up `task:ready` signals, produces `artifact:shaped`
+- **Critic** (concurrency: 2) — reviews shaped artifacts, deposits `review:approved` or `review:changes-needed`
+- **Keeper** (concurrency: 1) — merges approved work, deposits `artifact:merged`
 
-No orchestrator. No message broker. No routing logic. The colonies discover work through the environment and coordinate through signals.
+Colony definitions live in `colonies.ts` and are shared across all hosting modes:
 
 ```bash
-npm run demo
+# Local host (default)
+npx tsx examples/code-pipeline/index.ts
+
+# Docker host
+export MANDIBLE_API_URL=http://localhost:9091
+export MANDIBLE_API_KEY=your-key
+npx tsx examples/code-pipeline/docker.ts
+
+# With real LLM providers
+export ANTHROPIC_API_KEY=sk-ant-...
+npx tsx examples/code-pipeline/with-providers.ts
 ```
 
 ### Repo maintenance
