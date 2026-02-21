@@ -1,9 +1,9 @@
 // PURPOSE: Fixer colony — claims issue:detected signals and attempts to fix them using a Claude agent.
 // PURPOSE: Deposits fix:proposed on success or fix:failed on failure.
 
-import type { Environment, Signal } from '../../src/core/types.js';
+import type { Signal } from '../../src/core/types.js';
 import type { AgentResult, SignalDeposit, BedrockConfig } from '../../src/providers/types.js';
-import { colony } from '../../src/dsl/builder.js';
+import type { ColonyBuilder } from '../../src/dsl/builder.js';
 import { withClaudeCode } from '../../src/providers/claude-code.js';
 
 // ----------------------------------------------------------
@@ -45,8 +45,6 @@ export interface FixFailedPayload {
 export interface FixerColonyOptions {
   /** Signal types to sense. Defaults to ['issue:detected']. */
   senseTypes?: string | string[];
-  /** Colony name. Defaults to 'fixer'. */
-  name?: string;
   /** Model to use. Defaults to 'claude-sonnet-4-5-20250929'. */
   model?: string;
   /** Max budget per fix in USD. Defaults to 3.00. */
@@ -66,17 +64,24 @@ export interface FixerColonyOptions {
 }
 
 // ----------------------------------------------------------
-// Fixer colony factory
+// Fixer colony configurator
 // ----------------------------------------------------------
 
-export function createFixerColony(
-  env: Environment,
+/**
+ * Returns a colony configurator for use with the mandible() DSL.
+ *
+ * @example
+ * await mandible('repo-maintenance')
+ *   .environment(env)
+ *   .colony('fixer', configureFixer(repoRoot))
+ *   .start();
+ */
+export function configureFixer(
   repoRoot: string,
   options: FixerColonyOptions = {}
 ) {
   const {
     senseTypes = 'issue:detected',
-    name = 'fixer',
     model = 'claude-sonnet-4-5-20250929',
     maxBudgetUsd = 3.00,
     maxTurns = 80,
@@ -89,149 +94,147 @@ export function createFixerColony(
 
   const types = Array.isArray(senseTypes) ? senseTypes : [senseTypes];
 
-  let builder = colony(name).in(env);
-  for (const t of types) {
-    builder = builder.sense(t, { unclaimed: true });
-  }
-  const def = builder
-    .do('fix-issue', withClaudeCode({
-      model,
+  return (c: ColonyBuilder) => {
+    for (const t of types) {
+      c = c.sense(t, { unclaimed: true });
+    }
+    return c
+      .do('fix-issue', withClaudeCode({
+        model,
 
-      systemPrompt: [
-        'You are a Fixer agent in a repo-maintenance colony.',
-        'Your job is to claim a detected issue and produce a minimal, correct fix.',
-        '',
-        'Workflow:',
-        '1. Create a branch named `mandible/fix-{category}-{short-hash}` from the current HEAD.',
-        '   Use the first 6 chars of a random hex string for the short hash.',
-        '2. Analyze the issue description and affected files.',
-        '3. Make the MINIMAL change needed to resolve the issue.',
-        '4. Run tests (`npm test` or `npx vitest run`) to verify the fix does not break anything.',
-        '5. Output a JSON result block (see below).',
-        '',
-        'Constraints:',
-        '- Do NOT merge to main. Only work on the fix branch.',
-        '- Do NOT make changes beyond what is needed for this specific issue.',
-        '- If a previous_feedback field is present, it means a prior fix attempt was rejected.',
-        '  Use that feedback to improve your approach.',
-        '- If you cannot fix the issue, output a failure result instead.',
-        '',
-        'Output format — wrap in a ```json code block:',
-        '```json',
-        '{',
-        '  "status": "success",',
-        '  "issue_title": "Short title of the issue",',
-        '  "branch": "mandible/fix-category-abc123",',
-        '  "diff_summary": "What changed and why",',
-        '  "files_changed": ["file1.ts", "file2.ts"],',
-        '  "tests_passed": true,',
-        '  "confidence": "high"',
-        '}',
-        '```',
-        '',
-        'On failure:',
-        '```json',
-        '{',
-        '  "status": "failure",',
-        '  "issue_title": "Short title of the issue",',
-        '  "reason": "Why the fix could not be applied",',
-        '  "attempted_approach": "What was tried"',
-        '}',
-        '```',
-      ].join('\n'),
+        systemPrompt: [
+          'You are a Fixer agent in a repo-maintenance colony.',
+          'Your job is to claim a detected issue and produce a minimal, correct fix.',
+          '',
+          'Workflow:',
+          '1. Create a branch named `mandible/fix-{category}-{short-hash}` from the current HEAD.',
+          '   Use the first 6 chars of a random hex string for the short hash.',
+          '2. Analyze the issue description and affected files.',
+          '3. Make the MINIMAL change needed to resolve the issue.',
+          '4. Run tests (`npm test` or `npx vitest run`) to verify the fix does not break anything.',
+          '5. Output a JSON result block (see below).',
+          '',
+          'Constraints:',
+          '- Do NOT merge to main. Only work on the fix branch.',
+          '- Do NOT make changes beyond what is needed for this specific issue.',
+          '- If a previous_feedback field is present, it means a prior fix attempt was rejected.',
+          '  Use that feedback to improve your approach.',
+          '- If you cannot fix the issue, output a failure result instead.',
+          '',
+          'Output format — wrap in a ```json code block:',
+          '```json',
+          '{',
+          '  "status": "success",',
+          '  "issue_title": "Short title of the issue",',
+          '  "branch": "mandible/fix-category-abc123",',
+          '  "diff_summary": "What changed and why",',
+          '  "files_changed": ["file1.ts", "file2.ts"],',
+          '  "tests_passed": true,',
+          '  "confidence": "high"',
+          '}',
+          '```',
+          '',
+          'On failure:',
+          '```json',
+          '{',
+          '  "status": "failure",',
+          '  "issue_title": "Short title of the issue",',
+          '  "reason": "Why the fix could not be applied",',
+          '  "attempted_approach": "What was tried"',
+          '}',
+          '```',
+        ].join('\n'),
 
-      prompt: (signal) => {
-        const p = signal.payload as Record<string, unknown>;
-        const lines = [
-          '## Fix Request',
-          '',
-          `**Category:** ${p.category ?? 'unknown'}`,
-          `**Severity:** ${p.severity ?? 'medium'}`,
-          `**Title:** ${p.title ?? 'Untitled issue'}`,
-          '',
-          '### Description',
-          String(p.description ?? 'No description provided.'),
-          '',
-        ];
+        prompt: (signal) => {
+          const p = signal.payload as Record<string, unknown>;
+          const lines = [
+            '## Fix Request',
+            '',
+            `**Category:** ${p.category ?? 'unknown'}`,
+            `**Severity:** ${p.severity ?? 'medium'}`,
+            `**Title:** ${p.title ?? 'Untitled issue'}`,
+            '',
+            '### Description',
+            String(p.description ?? 'No description provided.'),
+            '',
+          ];
 
-        const files = p.files as string[] | undefined;
-        if (files && files.length > 0) {
-          lines.push('### Affected Files');
-          for (const f of files) {
-            lines.push(`- ${f}`);
+          const files = p.files as string[] | undefined;
+          if (files && files.length > 0) {
+            lines.push('### Affected Files');
+            for (const f of files) {
+              lines.push(`- ${f}`);
+            }
+            lines.push('');
           }
-          lines.push('');
-        }
 
-        if (p.suggested_fix) {
-          lines.push('### Suggested Fix');
-          lines.push(String(p.suggested_fix));
-          lines.push('');
-        }
+          if (p.suggested_fix) {
+            lines.push('### Suggested Fix');
+            lines.push(String(p.suggested_fix));
+            lines.push('');
+          }
 
-        if (p.previous_feedback) {
-          lines.push('### Previous Feedback (from rejected attempt)');
-          lines.push(String(p.previous_feedback));
-          lines.push('');
-          lines.push('Use this feedback to improve your fix approach.');
-          lines.push('');
-        }
+          if (p.previous_feedback) {
+            lines.push('### Previous Feedback (from rejected attempt)');
+            lines.push(String(p.previous_feedback));
+            lines.push('');
+            lines.push('Use this feedback to improve your fix approach.');
+            lines.push('');
+          }
 
-        lines.push('Apply the fix, run tests, and output the JSON result block.');
+          lines.push('Apply the fix, run tests, and output the JSON result block.');
 
-        return lines.join('\n');
-      },
+          return lines.join('\n');
+        },
 
-      allowedTools,
-      disallowedTools,
-      workingDirectory: repoRoot,
-      maxBudgetUsd,
-      maxTurns,
-      bedrock,
+        allowedTools,
+        disallowedTools,
+        workingDirectory: repoRoot,
+        maxBudgetUsd,
+        maxTurns,
+        bedrock,
 
-      output: (result: AgentResult, signal: Signal): SignalDeposit[] => {
-        const parsed = parseFixerOutput(result.text);
-        const issuePayload = signal.payload as Record<string, unknown>;
-        const issueTitle = String(issuePayload.title ?? 'Unknown issue');
+        output: (result: AgentResult, signal: Signal): SignalDeposit[] => {
+          const parsed = parseFixerOutput(result.text);
+          const issuePayload = signal.payload as Record<string, unknown>;
+          const issueTitle = String(issuePayload.title ?? 'Unknown issue');
 
-        if (parsed.status === 'failure') {
+          if (parsed.status === 'failure') {
+            return [{
+              type: 'fix:failed',
+              payload: {
+                issue_title: parsed.issue_title || issueTitle,
+                reason: parsed.reason || 'Agent did not produce a valid result',
+                attempted_approach: parsed.attempted_approach,
+                costUsd: result.costUsd,
+                durationMs: result.durationMs,
+              },
+              tags: ['failure'],
+            }];
+          }
+
           return [{
-            type: 'fix:failed',
+            type: 'fix:proposed',
             payload: {
               issue_title: parsed.issue_title || issueTitle,
-              reason: parsed.reason || 'Agent did not produce a valid result',
-              attempted_approach: parsed.attempted_approach,
+              branch: parsed.branch || 'unknown',
+              diff_summary: parsed.diff_summary || '',
+              files_changed: parsed.files_changed || [],
+              tests_passed: parsed.tests_passed ?? false,
+              confidence: parsed.confidence || 'low',
               costUsd: result.costUsd,
               durationMs: result.durationMs,
             },
-            tags: ['failure'],
+            tags: [parsed.confidence || 'low', parsed.tests_passed ? 'tests-pass' : 'tests-fail'],
           }];
-        }
+        },
 
-        return [{
-          type: 'fix:proposed',
-          payload: {
-            issue_title: parsed.issue_title || issueTitle,
-            branch: parsed.branch || 'unknown',
-            diff_summary: parsed.diff_summary || '',
-            files_changed: parsed.files_changed || [],
-            tests_passed: parsed.tests_passed ?? false,
-            confidence: parsed.confidence || 'low',
-            costUsd: result.costUsd,
-            durationMs: result.durationMs,
-          },
-          tags: [parsed.confidence || 'low', parsed.tests_passed ? 'tests-pass' : 'tests-fail'],
-        }];
-      },
-
-      autoWithdraw: true,
-    }))
-    .concurrency(concurrency)
-    .claim('lease', claimLeaseDuration)
-    .poll(3000)
-    .build();
-
-  return def;
+        autoWithdraw: true,
+      }))
+      .concurrency(concurrency)
+      .claim('lease', claimLeaseDuration)
+      .poll(3000);
+  };
 }
 
 // ----------------------------------------------------------

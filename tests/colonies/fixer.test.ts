@@ -6,10 +6,11 @@ import type { Signal } from '../../src/core/types.js';
 import type { AgentResult, SignalDeposit } from '../../src/providers/types.js';
 import {
   parseFixerOutput,
-  createFixerColony,
+  configureFixer,
   type ParsedFixerOutput,
   type FixerColonyOptions,
 } from '../../examples/repo-maintenance/fixer.js';
+import { colony } from '../../src/dsl/builder.js';
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -192,12 +193,12 @@ I was unable to fix this issue.
   });
 });
 
-// ── createFixerColony ────────────────────────────────────────
+// ── configureFixer ───────────────────────────────────────────
 
-describe('createFixerColony', () => {
+describe('configureFixer', () => {
   it('returns a valid ColonyDefinition with defaults', () => {
     const env = makeStubEnv();
-    const def = createFixerColony(env as any, '/tmp/repo');
+    const def = configureFixer('/tmp/repo')(colony('fixer')).in(env as any).build();
 
     expect(def.name).toBe('fixer');
     expect(def.environment).toBe(env);
@@ -210,7 +211,7 @@ describe('createFixerColony', () => {
 
   it('default sense type is issue:detected', () => {
     const env = makeStubEnv();
-    const def = createFixerColony(env as any, '/tmp/repo');
+    const def = configureFixer('/tmp/repo')(colony('fixer')).in(env as any).build();
 
     const sensorTypes = def.sensors.map(s => s.query.type);
     expect(sensorTypes).toContain('issue:detected');
@@ -218,11 +219,10 @@ describe('createFixerColony', () => {
 
   it('respects custom options', () => {
     const env = makeStubEnv();
-    const def = createFixerColony(env as any, '/tmp/repo', {
-      name: 'github-fixer',
+    const def = configureFixer('/tmp/repo', {
       concurrency: 4,
       claimLeaseDuration: 300_000,
-    });
+    })(colony('github-fixer')).in(env as any).build();
 
     expect(def.name).toBe('github-fixer');
     expect(def.concurrency).toBe(4);
@@ -230,9 +230,9 @@ describe('createFixerColony', () => {
 
   it('supports custom sense types for GitHub', () => {
     const env = makeStubEnv();
-    const def = createFixerColony(env as any, '/tmp/repo', {
+    const def = configureFixer('/tmp/repo', {
       senseTypes: ['golem:*', 'issue:*'],
-    });
+    })(colony('fixer')).in(env as any).build();
 
     const sensorTypes = def.sensors.map(s => s.query.type);
     expect(sensorTypes).toContain('golem:*');
@@ -242,9 +242,9 @@ describe('createFixerColony', () => {
 
   it('accepts a single string sense type', () => {
     const env = makeStubEnv();
-    const def = createFixerColony(env as any, '/tmp/repo', {
+    const def = configureFixer('/tmp/repo', {
       senseTypes: 'golem:issue',
-    });
+    })(colony('fixer')).in(env as any).build();
 
     const sensorTypes = def.sensors.map(s => s.query.type);
     expect(sensorTypes).toContain('golem:issue');
@@ -253,7 +253,7 @@ describe('createFixerColony', () => {
 
   it('sets unclaimed: true on all sensors', () => {
     const env = makeStubEnv();
-    const def = createFixerColony(env as any, '/tmp/repo');
+    const def = configureFixer('/tmp/repo')(colony('fixer')).in(env as any).build();
 
     for (const sensor of def.sensors) {
       expect(sensor.query.unclaimed).toBe(true);
