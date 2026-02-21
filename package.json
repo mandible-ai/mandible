@@ -68,7 +68,7 @@
     "url": "git+https://github.com/mandible-ai/mandible.git"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp src/cli/dashboard.html dist/src/cli/dashboard.html",
     "dev": "tsx watch examples/code-pipeline/index.ts",
     "demo": "tsx examples/code-pipeline/index.ts",
     "test": "vitest",
