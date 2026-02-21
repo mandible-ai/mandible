@@ -34,7 +34,7 @@ jobs:
         run: npx vitest run
 
       - name: Build
-        run: npx tsc
+        run: npm run build
 
       - name: Publish
         run: npm publish --provenance --access public
