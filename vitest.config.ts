@@ -10,7 +10,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/core/**/*.ts', 'src/environments/**/*.ts'],
-      exclude: ['src/**/index.ts', 'src/environments/dolt/**', 'src/environments/remote/**'],
+      exclude: ['src/**/index.ts', 'src/environments/dolt/**'],
       thresholds: {
         branches: 80,
         functions: 80,
