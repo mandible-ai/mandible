@@ -15,6 +15,7 @@ import type {
   ZoneStatus,
   ApiKey,
   CreateApiKeyResponse,
+  BundleUploadInfo,
   ApiError,
 } from './types.js';
 
@@ -89,6 +90,17 @@ export class MandibleCloudClient {
 
   async getZone(zoneId: string, projectId?: string): Promise<ZoneStatus> {
     return this.get(`/v1/projects/${projectId ?? this.requireProject()}/zones/${zoneId}`);
+  }
+
+  // ----------------------------------------------------------
+  // Bundles
+  // ----------------------------------------------------------
+
+  async requestBundleUpload(projectId?: string): Promise<BundleUploadInfo> {
+    return this.post(
+      `/v1/projects/${projectId ?? this.requireProject()}/bundles/upload`,
+      {},
+    );
   }
 
   // ----------------------------------------------------------

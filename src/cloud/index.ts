@@ -16,4 +16,6 @@ export type {
   ApiKey,
   CreateApiKeyResponse,
   ApiError,
+  ColonyModuleRef,
+  BundleUploadInfo,
 } from './types.js';

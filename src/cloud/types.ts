@@ -29,6 +29,8 @@ export interface CreateProjectRequest {
 
 export interface DeployRequest {
   colonies: DeployColonyConfig[];
+  bundleS3Key?: string;
+  bundleHash?: string;
 }
 
 export interface DeployColonyConfig {
@@ -39,6 +41,25 @@ export interface DeployColonyConfig {
   concurrency: number;
   config?: Record<string, unknown>;
   resources?: HostResources;
+  environmentConfig?: Record<string, unknown>;
+  moduleRef?: { export: string; args?: unknown[] };
+}
+
+/**
+ * Reference to a colony configurator module for cloud deployment.
+ * Instead of passing a closure (which can't be serialized), pass a reference
+ * to a module file, its exported function name, and optional arguments.
+ *
+ * For local host: the module is dynamically imported and called.
+ * For cloud host: the module is bundled via esbuild and shipped to the zone.
+ */
+export interface ColonyModuleRef {
+  /** Path to the module file (relative to cwd or absolute) */
+  module: string;
+  /** Name of the exported configurator function */
+  export: string;
+  /** Arguments to pass to the configurator function */
+  args?: unknown[];
 }
 
 
@@ -115,6 +136,13 @@ export interface CreateApiKeyResponse {
   id: string;
   key: string;
   prefix: string;
+}
+
+export interface BundleUploadInfo {
+  /** Presigned S3 PUT URL for uploading the bundle */
+  url: string;
+  /** S3 key where the bundle will be stored */
+  s3Key: string;
 }
 
 export interface ApiError {
