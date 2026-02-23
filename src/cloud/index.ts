@@ -1,6 +1,7 @@
 export { MandibleCloudClient, MandibleCloudError } from './client.js';
 // CloudHost lives in @mandible-ai/cloud (mandible-cloud repo)
 export type {
+  Account,
   CloudConfig,
   Project,
   CreateProjectRequest,
@@ -16,4 +17,6 @@ export type {
   ApiKey,
   CreateApiKeyResponse,
   ApiError,
+  ColonyModuleRef,
+  BundleUploadInfo,
 } from './types.js';

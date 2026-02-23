@@ -31,7 +31,11 @@
 //   const host = await mandible('review')
 //     .environment(env)                // same environment, real signal substrate
 //     .host(cloud({ apiKey: CLOUD_KEY })) // colonies run in Edera microVMs
-//     .colony('worker', c => c.sense('task:ready').do('work', handler))
+//     .colony('scout', {
+//       module: './scout.js',
+//       export: 'configureScout',
+//       args: [TARGET_REPO],
+//     })
 //     .start();
 //
 //   // Dashboard is opt-in after start:
@@ -44,12 +48,26 @@ import type {
   Environment, ColonyDefinition,
   Host,
 } from '../core/types.js';
+import type { ColonyModuleRef } from '../cloud/types.js';
 
 type ColonyConfigurator = (builder: ColonyBuilder) => ColonyBuilder;
 
 interface ColonyEntry {
   name: string;
-  configurator: ColonyConfigurator;
+  configurator?: ColonyConfigurator;
+  moduleRef?: ColonyModuleRef;
+}
+
+/** Check if a value is a ColonyModuleRef (has module + export fields) */
+function isModuleRef(value: unknown): value is ColonyModuleRef {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'module' in value &&
+    'export' in value &&
+    typeof (value as ColonyModuleRef).module === 'string' &&
+    typeof (value as ColonyModuleRef).export === 'string'
+  );
 }
 
 export class MandibleBuilder {
@@ -77,10 +95,30 @@ export class MandibleBuilder {
     return this;
   }
 
-  /** Add a colony */
-  colony(name: string, configure: ColonyConfigurator): this {
-    this._colonies.push({ name, configurator: configure });
+  /**
+   * Add a colony.
+   *
+   * Accepts either a configurator closure (for local usage) or a module
+   * reference (for cloud deployment where closures can't be serialized).
+   *
+   * @example Closure (local host):
+   * .colony('scout', c => c.sense('task:ready').do('work', handler))
+   *
+   * @example Module ref (cloud host):
+   * .colony('scout', { module: './scout.js', export: 'configureScout', args: [repoRoot] })
+   */
+  colony(name: string, configure: ColonyConfigurator | ColonyModuleRef): this {
+    if (isModuleRef(configure)) {
+      this._colonies.push({ name, moduleRef: configure });
+    } else {
+      this._colonies.push({ name, configurator: configure });
+    }
     return this;
+  }
+
+  /** Get the raw colony entries (used by CloudHost for bundling) */
+  get colonyEntries(): ReadonlyArray<Readonly<ColonyEntry>> {
+    return this._colonies;
   }
 
   /**
@@ -97,7 +135,13 @@ export class MandibleBuilder {
   async start(): Promise<Host> {
     const env = this.requireEnv();
     const host = await this.resolveHost();
-    const definitions = this.buildDefinitions(env);
+    const definitions = await this.buildDefinitions(env);
+
+    // Pass colony entries to the host if it supports module refs (CloudHost)
+    if ('setColonyEntries' in host && typeof (host as any).setColonyEntries === 'function') {
+      (host as any).setColonyEntries(this._colonies);
+    }
+
     await host.start(definitions);
     return host;
   }
@@ -106,7 +150,7 @@ export class MandibleBuilder {
    * Build colony definitions without starting anything.
    * Useful for testing or custom orchestration.
    */
-  build(env?: Environment): ColonyDefinition[] {
+  async build(env?: Environment): Promise<ColonyDefinition[]> {
     const targetEnv = env ?? this._env;
     if (!targetEnv) {
       throw new Error(
@@ -116,11 +160,20 @@ export class MandibleBuilder {
     return this.buildDefinitions(targetEnv);
   }
 
-  private buildDefinitions(env: Environment): ColonyDefinition[] {
-    return this._colonies.map(entry => {
-      const builder = entry.configurator(colonyBuilder(entry.name));
-      return builder.in(env).build();
-    });
+  private async buildDefinitions(env: Environment): Promise<ColonyDefinition[]> {
+    const results: ColonyDefinition[] = [];
+    for (const entry of this._colonies) {
+      if (entry.configurator) {
+        const builder = entry.configurator(colonyBuilder(entry.name));
+        results.push(builder.in(env).build());
+      } else if (entry.moduleRef) {
+        // For module refs, resolve via dynamic import (works for local host)
+        const configurator = await resolveModuleRef(entry.moduleRef);
+        const builder = configurator(colonyBuilder(entry.name));
+        results.push(builder.in(env).build());
+      }
+    }
+    return results;
   }
 
   private async resolveHost(): Promise<Host> {
@@ -138,6 +191,27 @@ export class MandibleBuilder {
     }
     return this._env;
   }
+}
+
+/**
+ * Resolve a ColonyModuleRef to a live configurator function via dynamic import.
+ * Used by LocalHost to run module-ref-based colonies locally.
+ */
+async function resolveModuleRef(ref: ColonyModuleRef): Promise<ColonyConfigurator> {
+  const mod = await import(ref.module);
+  const fn = mod[ref.export];
+  if (typeof fn !== 'function') {
+    throw new Error(
+      `Module "${ref.module}" does not export a function named "${ref.export}"`,
+    );
+  }
+  const result = fn(...(ref.args ?? []));
+  if (typeof result !== 'function') {
+    throw new Error(
+      `"${ref.export}" from "${ref.module}" must return a configurator function (builder => builder), got ${typeof result}`,
+    );
+  }
+  return result;
 }
 
 /**
