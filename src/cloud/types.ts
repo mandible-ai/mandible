@@ -13,10 +13,19 @@ export interface CloudConfig {
   apiUrl: string;
   apiKey: string;
   project?: string;
+  accountId?: string;
+}
+
+export interface Account {
+  id: string;
+  name: string;
+  email?: string;
+  createdAt: string;
 }
 
 export interface Project {
   id: string;
+  accountId: string;
   name: string;
   signalServerUrl: string;
   createdAt: string;
@@ -126,10 +135,13 @@ export interface ColonyStatus {
 
 export interface ApiKey {
   id: string;
+  accountId: string;
   prefix: string;
-  project: string;
+  scopes: string[];
+  projectIds?: string[];
   createdAt: string;
   lastUsedAt?: string;
+  expiresAt?: string;
 }
 
 export interface CreateApiKeyResponse {
