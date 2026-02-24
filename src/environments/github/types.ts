@@ -66,6 +66,19 @@ export interface GitHubReview {
 }
 
 // ----------------------------------------------------------
+// GitHub Reaction — from Reactions API
+// ----------------------------------------------------------
+
+export type ReactionContent = '+1' | '-1' | 'laugh' | 'confused' | 'heart' | 'hooray' | 'rocket' | 'eyes';
+
+export interface GitHubReaction {
+  id: number;
+  user: { login: string };
+  content: ReactionContent;
+  created_at: string;
+}
+
+// ----------------------------------------------------------
 // Concentration mappers
 // ----------------------------------------------------------
 
@@ -146,6 +159,29 @@ export interface GitHubEnvConfig {
 
   /** Prefix for claim labels. Default: 'mandible:claimed' */
   claimLabelPrefix?: string;
+
+  /** Fetch reactions and use them for concentration reinforcement. Default: false */
+  fetchReactions?: boolean;
+
+  /** Reaction scoring weights */
+  reactionWeights?: {
+    /** Concentration boost per positive reaction (+1, heart, rocket, hooray). Default: 0.03 */
+    positiveWeight?: number;
+    /** Concentration penalty per negative reaction (-1, confused). Default: 0.05 */
+    negativeWeight?: number;
+    /** Maximum total reaction boost. Default: 0.3 */
+    maxBoost?: number;
+    /** Maximum total reaction penalty. Default: 0.2 */
+    maxPenalty?: number;
+  };
+
+  /** Rate limit backpressure configuration */
+  rateLimitBackpressure?: {
+    /** Ratio below which polling slows down. Default: 0.2 (20% remaining) */
+    warningThreshold?: number;
+    /** Ratio below which polling pauses until reset. Default: 0.05 (5% remaining) */
+    criticalThreshold?: number;
+  };
 
   /** Whether deposit() creates GitHub issues. Default: true */
   allowDeposit?: boolean;

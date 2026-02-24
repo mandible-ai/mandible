@@ -1,7 +1,7 @@
 // PURPOSE: Default mappers for converting GitHub issues and PRs into mandible signals
 // PURPOSE: Type mapping, payload extraction, concentration scoring, Golem body parsing
 
-import type { GitHubIssue, GitHubPullRequest, GitHubReview, GitHubEnvConfig } from './types.js';
+import type { GitHubIssue, GitHubPullRequest, GitHubReview, GitHubReaction, GitHubEnvConfig } from './types.js';
 import type { Signal } from '../../core/types.js';
 
 // ----------------------------------------------------------
@@ -237,6 +237,50 @@ export function defaultConcentrationMapper(
 
   const raw = baseFreshness + commentBoost + assignedBoost + milestoneBoost;
   return Math.max(floor, Math.min(1.0, raw));
+}
+
+// ----------------------------------------------------------
+// Reaction Scoring — human reinforcement of signals
+// ----------------------------------------------------------
+
+const POSITIVE_REACTIONS = new Set(['+1', 'heart', 'rocket', 'hooray']);
+const NEGATIVE_REACTIONS = new Set(['-1', 'confused']);
+
+/**
+ * Compute a concentration adjustment from reactions.
+ * Positive reactions (+1, heart, rocket, hooray) boost the signal.
+ * Negative reactions (-1, confused) reduce it.
+ * Each unique user's reaction counts once (deduplicated by user+content).
+ *
+ * Returns a value typically in [-0.2, +0.3] range (capped).
+ */
+export function computeReactionScore(
+  reactions: GitHubReaction[],
+  options?: { positiveWeight?: number; negativeWeight?: number; maxBoost?: number; maxPenalty?: number }
+): number {
+  const positiveWeight = options?.positiveWeight ?? 0.03;
+  const negativeWeight = options?.negativeWeight ?? 0.05;
+  const maxBoost = options?.maxBoost ?? 0.3;
+  const maxPenalty = options?.maxPenalty ?? 0.2;
+
+  // Deduplicate: one reaction per user per content type
+  const seen = new Set<string>();
+  let positiveCount = 0;
+  let negativeCount = 0;
+
+  for (const reaction of reactions) {
+    const key = `${reaction.user.login}:${reaction.content}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    if (POSITIVE_REACTIONS.has(reaction.content)) positiveCount++;
+    else if (NEGATIVE_REACTIONS.has(reaction.content)) negativeCount++;
+  }
+
+  const boost = Math.min(maxBoost, positiveCount * positiveWeight);
+  const penalty = Math.min(maxPenalty, negativeCount * negativeWeight);
+
+  return boost - penalty;
 }
 
 // ----------------------------------------------------------

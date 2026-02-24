@@ -8,7 +8,7 @@ import type {
 import { matchesQuery, isClaimExpired } from '../../core/signal.js';
 import { validateSignalInput } from '../../core/validation.js';
 import { GitHubClient } from './client.js';
-import type { GitHubEnvConfig, GitHubIssue, GitHubPullRequest, GitHubReview } from './types.js';
+import type { GitHubEnvConfig, GitHubIssue, GitHubPullRequest, GitHubReview, GitHubReaction } from './types.js';
 import {
   defaultTypeMapper,
   defaultPayloadMapper,
@@ -17,6 +17,7 @@ import {
   defaultPRTypeMapper,
   defaultPRPayloadMapper,
   defaultPRConcentrationMapper,
+  computeReactionScore,
   computeDependencyBoosts,
 } from './mapper.js';
 
@@ -38,6 +39,7 @@ export class GitHubEnvironment implements Environment {
   private readonly fetchReviews: boolean;
   private readonly persistentClaims: boolean;
   private readonly claimLabelPrefix: string;
+  private readonly fetchReactionsEnabled: boolean;
   private readonly decayRate: number;
   private readonly concentrationFloor: number;
 
@@ -46,6 +48,8 @@ export class GitHubEnvironment implements Environment {
   private withdrawn = new Map<string, Signal>();
   // Cache of reviews per PR number
   private prReviews = new Map<number, GitHubReview[]>();
+  // Cache of reactions per issue/PR number
+  private reactions = new Map<number, GitHubReaction[]>();
 
   // Tracking for decay
   private lastSyncAt: number = Date.now();
@@ -70,6 +74,7 @@ export class GitHubEnvironment implements Environment {
     this.fetchReviews = config.fetchReviews !== false;
     this.persistentClaims = config.persistentClaims ?? false;
     this.claimLabelPrefix = config.claimLabelPrefix ?? 'mandible:claimed';
+    this.fetchReactionsEnabled = config.fetchReactions ?? false;
     this.decayRate = config.decayRate ?? 0.001;
     this.concentrationFloor = config.concentrationFloor ?? 0.05;
   }
@@ -235,6 +240,28 @@ export class GitHubEnvironment implements Environment {
       }
     }
 
+    // Apply reaction-based concentration adjustments
+    if (this.fetchReactionsEnabled) {
+      for (const [id, signal] of this.signals) {
+        const issueNumber = this.issueNumberFromSignalId(id);
+        if (issueNumber === null) continue;
+
+        try {
+          const reactions = await this.client.fetchReactions(issueNumber);
+          this.reactions.set(issueNumber, reactions);
+          const reactionAdj = computeReactionScore(reactions, this.config.reactionWeights);
+          if (Math.abs(reactionAdj) > 0.001) {
+            signal.meta.concentration = Math.max(
+              this.concentrationFloor,
+              Math.min(1.0, signal.meta.concentration + reactionAdj)
+            );
+          }
+        } catch {
+          // Use cached reactions on failure
+        }
+      }
+    }
+
     this.lastSyncAt = Date.now();
     return newSignalIds;
   }
@@ -396,13 +423,23 @@ export class GitHubEnvironment implements Environment {
   ): Subscription {
     const seen = new Set<string>();
     let active = true;
-    let pollTimer: ReturnType<typeof setInterval> | undefined;
-    const pollInterval = this.config.pollInterval ?? 30_000;
+    let scheduledTimer: ReturnType<typeof setTimeout> | undefined;
+    const basePollInterval = this.config.pollInterval ?? 30_000;
+    const backpressureConfig = this.config.rateLimitBackpressure;
+    const warningThreshold = backpressureConfig?.warningThreshold ?? 0.2;
+    const criticalThreshold = backpressureConfig?.criticalThreshold ?? 0.05;
 
-    const emitMatches = async () => {
+    const scheduleNext = () => {
+      if (!active) return;
+      const backoffMs = this.client.getBackoffMs(warningThreshold, criticalThreshold);
+      const nextInterval = basePollInterval + backoffMs;
+      scheduledTimer = setTimeout(poll, nextInterval);
+    };
+
+    const poll = async () => {
       if (!active) return;
       try {
-        const newIds = await this.syncFromGitHub();
+        await this.syncFromGitHub();
         if (!this.initialized) this.initialized = true;
 
         for (const [id, signal] of this.signals) {
@@ -416,13 +453,12 @@ export class GitHubEnvironment implements Environment {
       } catch {
         // Swallow errors during poll — will retry next cycle
       }
+      scheduleNext();
     };
 
-    // Initial sync + emit
+    // Initial sync + emit, then start polling
     const setup = async () => {
-      await emitMatches();
-      if (!active) return;
-      pollTimer = setInterval(emitMatches, pollInterval);
+      await poll();
     };
 
     setup();
@@ -430,7 +466,7 @@ export class GitHubEnvironment implements Environment {
     return {
       unsubscribe() {
         active = false;
-        if (pollTimer) clearInterval(pollTimer);
+        if (scheduledTimer) clearTimeout(scheduledTimer);
       },
     };
   }

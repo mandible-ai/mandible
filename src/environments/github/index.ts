@@ -4,6 +4,7 @@
 export { GitHubEnvironment } from './adapter.js';
 export type {
   GitHubEnvConfig, GitHubIssue, GitHubPullRequest, GitHubReview,
+  GitHubReaction, ReactionContent,
   ConcentrationMapper, PRConcentrationMapper, ReviewState,
 } from './types.js';
 export {
@@ -15,6 +16,7 @@ export {
   defaultPRPayloadMapper,
   defaultPRConcentrationMapper,
   resolveReviewState,
+  computeReactionScore,
   parseDependencyIds,
   computeFreshness,
   parseGolemBody,

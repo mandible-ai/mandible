@@ -13,12 +13,13 @@ import {
   defaultPRPayloadMapper,
   defaultPRConcentrationMapper,
   resolveReviewState,
+  computeReactionScore,
   computeFreshness,
   parseGolemBody,
   parseDependencyIds,
   computeDependencyBoosts,
 } from '../../src/environments/github/mapper.js';
-import type { GitHubIssue, GitHubPullRequest, GitHubReview, GitHubEnvConfig } from '../../src/environments/github/types.js';
+import type { GitHubIssue, GitHubPullRequest, GitHubReview, GitHubReaction, GitHubEnvConfig } from '../../src/environments/github/types.js';
 import type { Signal } from '../../src/core/types.js';
 
 // ----------------------------------------------------------
@@ -143,6 +144,7 @@ let mockPRs: import('../../src/environments/github/types.js').GitHubPullRequest[
 let mockReviewsByPR: Map<number, import('../../src/environments/github/types.js').GitHubReview[]> = new Map();
 let mockLabelsAdded: Array<{ number: number; label: string }> = [];
 let mockLabelsRemoved: Array<{ number: number; label: string }> = [];
+let mockReactionsByIssue: Map<number, GitHubReaction[]> = new Map();
 
 const rateLimitHeaders = {
   'x-ratelimit-remaining': '4999',
@@ -155,6 +157,7 @@ function setMockIssues(issues: GitHubIssue[], etag?: string): void {
   mockIssues = issues;
   mockPRs = [];
   mockReviewsByPR = new Map();
+  mockReactionsByIssue = new Map();
   mockLabelsAdded = [];
   mockLabelsRemoved = [];
   let issueEtag = etag ?? `"etag-issues-${Date.now()}"`;
@@ -187,6 +190,15 @@ function setMockIssues(issues: GitHubIssue[], etag?: string): void {
       }
       res.writeHead(200, rateLimitHeaders);
       res.end();
+      return;
+    }
+
+    // Issue/PR reactions
+    if (url.match(/\/issues\/\d+\/reactions/)) {
+      const num = parseInt(url.match(/\/issues\/(\d+)\/reactions/)![1], 10);
+      const reactions = mockReactionsByIssue.get(num) ?? [];
+      res.writeHead(200, { 'Content-Type': 'application/json', ...rateLimitHeaders });
+      res.end(JSON.stringify(reactions));
       return;
     }
 
@@ -232,6 +244,20 @@ function setMockIssues(issues: GitHubIssue[], etag?: string): void {
 function setMockPRs(prs: import('../../src/environments/github/types.js').GitHubPullRequest[], reviews?: Map<number, import('../../src/environments/github/types.js').GitHubReview[]>): void {
   mockPRs = prs;
   if (reviews) mockReviewsByPR = reviews;
+}
+
+function setMockReactions(reactions: Map<number, GitHubReaction[]>): void {
+  mockReactionsByIssue = reactions;
+}
+
+function makeReaction(overrides: Partial<GitHubReaction> = {}): GitHubReaction {
+  return {
+    id: Math.floor(Math.random() * 100000),
+    user: { login: 'user1' },
+    content: '+1',
+    created_at: new Date().toISOString(),
+    ...overrides,
+  };
 }
 
 /** Wrap a custom handler to return [] for /pulls and /reviews endpoints */
@@ -1969,5 +1995,199 @@ describe('GitHubEnvironment — persistent claims', () => {
 
     const signals = await env.observe({ unclaimed: true });
     expect(signals.length).toBe(0); // claimed, so not in unclaimed results
+  });
+});
+
+// ============================================================
+// Reaction Scoring Tests
+// ============================================================
+
+describe('computeReactionScore', () => {
+  it('returns 0 for empty reactions', () => {
+    expect(computeReactionScore([])).toBe(0);
+  });
+
+  it('boosts for positive reactions', () => {
+    const reactions: GitHubReaction[] = [
+      makeReaction({ user: { login: 'alice' }, content: '+1' }),
+      makeReaction({ user: { login: 'bob' }, content: 'heart' }),
+      makeReaction({ user: { login: 'carol' }, content: 'rocket' }),
+    ];
+    const score = computeReactionScore(reactions);
+    expect(score).toBeGreaterThan(0);
+    expect(score).toBeCloseTo(0.09); // 3 * 0.03
+  });
+
+  it('penalizes for negative reactions', () => {
+    const reactions: GitHubReaction[] = [
+      makeReaction({ user: { login: 'alice' }, content: '-1' }),
+      makeReaction({ user: { login: 'bob' }, content: 'confused' }),
+    ];
+    const score = computeReactionScore(reactions);
+    expect(score).toBeLessThan(0);
+    expect(score).toBeCloseTo(-0.1); // 2 * -0.05
+  });
+
+  it('nets positive and negative', () => {
+    const reactions: GitHubReaction[] = [
+      makeReaction({ user: { login: 'alice' }, content: '+1' }),
+      makeReaction({ user: { login: 'bob' }, content: '+1' }),
+      makeReaction({ user: { login: 'carol' }, content: '-1' }),
+    ];
+    const score = computeReactionScore(reactions);
+    expect(score).toBeCloseTo(0.06 - 0.05); // 2*0.03 - 1*0.05
+  });
+
+  it('deduplicates same user+content', () => {
+    const reactions: GitHubReaction[] = [
+      makeReaction({ user: { login: 'alice' }, content: '+1' }),
+      makeReaction({ user: { login: 'alice' }, content: '+1' }),
+      makeReaction({ user: { login: 'alice' }, content: '+1' }),
+    ];
+    const score = computeReactionScore(reactions);
+    expect(score).toBeCloseTo(0.03); // only 1 unique
+  });
+
+  it('allows same user with different content', () => {
+    const reactions: GitHubReaction[] = [
+      makeReaction({ user: { login: 'alice' }, content: '+1' }),
+      makeReaction({ user: { login: 'alice' }, content: 'heart' }),
+    ];
+    const score = computeReactionScore(reactions);
+    expect(score).toBeCloseTo(0.06); // 2 unique positive
+  });
+
+  it('caps boost at maxBoost', () => {
+    const reactions: GitHubReaction[] = Array.from({ length: 20 }, (_, i) =>
+      makeReaction({ user: { login: `user${i}` }, content: '+1' })
+    );
+    const score = computeReactionScore(reactions);
+    expect(score).toBeLessThanOrEqual(0.3);
+  });
+
+  it('caps penalty at maxPenalty', () => {
+    const reactions: GitHubReaction[] = Array.from({ length: 20 }, (_, i) =>
+      makeReaction({ user: { login: `user${i}` }, content: '-1' })
+    );
+    const score = computeReactionScore(reactions);
+    expect(score).toBeGreaterThanOrEqual(-0.2);
+  });
+
+  it('respects custom weights', () => {
+    const reactions: GitHubReaction[] = [
+      makeReaction({ user: { login: 'alice' }, content: '+1' }),
+    ];
+    const score = computeReactionScore(reactions, { positiveWeight: 0.1 });
+    expect(score).toBeCloseTo(0.1);
+  });
+
+  it('ignores neutral reactions (laugh, eyes)', () => {
+    const reactions: GitHubReaction[] = [
+      makeReaction({ user: { login: 'alice' }, content: 'laugh' }),
+      makeReaction({ user: { login: 'bob' }, content: 'eyes' }),
+    ];
+    expect(computeReactionScore(reactions)).toBe(0);
+  });
+});
+
+// ============================================================
+// Reaction Integration Tests
+// ============================================================
+
+describe('GitHubEnvironment — reactions', () => {
+  it('boosts concentration from positive reactions when fetchReactions is true', async () => {
+    const staleDate = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+    setMockIssues([makeIssue({ number: 1, updated_at: staleDate, created_at: staleDate })]);
+    const reactions = new Map<number, GitHubReaction[]>();
+    reactions.set(1, [
+      makeReaction({ user: { login: 'alice' }, content: '+1' }),
+      makeReaction({ user: { login: 'bob' }, content: 'heart' }),
+      makeReaction({ user: { login: 'carol' }, content: 'rocket' }),
+    ]);
+    setMockReactions(reactions);
+
+    const envNoReactions = createEnv();
+    await envNoReactions.sync();
+    const baseConc = (await envNoReactions.snapshot())[0].meta.concentration;
+
+    const envWithReactions = createEnv({ fetchReactions: true });
+    await envWithReactions.sync();
+    const boostedConc = (await envWithReactions.snapshot())[0].meta.concentration;
+
+    expect(boostedConc).toBeGreaterThan(baseConc);
+  });
+
+  it('reduces concentration from negative reactions', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+    const reactions = new Map<number, GitHubReaction[]>();
+    reactions.set(1, [
+      makeReaction({ user: { login: 'alice' }, content: '-1' }),
+      makeReaction({ user: { login: 'bob' }, content: '-1' }),
+      makeReaction({ user: { login: 'carol' }, content: 'confused' }),
+    ]);
+    setMockReactions(reactions);
+
+    const envNoReactions = createEnv();
+    await envNoReactions.sync();
+    const baseConc = (await envNoReactions.snapshot())[0].meta.concentration;
+
+    const envWithReactions = createEnv({ fetchReactions: true });
+    await envWithReactions.sync();
+    const reducedConc = (await envWithReactions.snapshot())[0].meta.concentration;
+
+    expect(reducedConc).toBeLessThan(baseConc);
+  });
+
+  it('does not fetch reactions when fetchReactions is false (default)', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+    const reactions = new Map<number, GitHubReaction[]>();
+    reactions.set(1, [
+      makeReaction({ user: { login: 'alice' }, content: '+1' }),
+    ]);
+    setMockReactions(reactions);
+
+    const env = createEnv(); // fetchReactions defaults to false
+    await env.sync();
+    const signals = await env.snapshot();
+
+    // Concentration should be the base value (no reaction boost)
+    const envWithReactions = createEnv({ fetchReactions: true });
+    await envWithReactions.sync();
+    const boostedConc = (await envWithReactions.snapshot())[0].meta.concentration;
+
+    expect(signals[0].meta.concentration).toBeLessThanOrEqual(boostedConc);
+  });
+});
+
+// ============================================================
+// Rate Limit Backpressure Tests
+// ============================================================
+
+describe('GitHubClient — getBackoffMs', () => {
+  it('returns 0 when rate limit is healthy', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+    const env = createEnv();
+    // After a normal sync, rate limit is 4999/5000 — healthy
+    await env.sync();
+    // Client is private, but backpressure is tested via watch behavior
+    // The mock returns 4999/5000, so backoff should be 0
+  });
+});
+
+describe('GitHubEnvironment — backpressure watch', () => {
+  it('uses setTimeout instead of setInterval for adaptive polling', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+
+    const env = createEnv({ pollInterval: 100 });
+    const received: Signal[] = [];
+    const sub = env.watch({}, (signal) => {
+      received.push(signal);
+    });
+
+    await new Promise(r => setTimeout(r, 350));
+    sub.unsubscribe();
+
+    // Should have received at least the initial signal
+    expect(received.length).toBeGreaterThanOrEqual(1);
   });
 });

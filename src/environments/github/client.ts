@@ -1,7 +1,7 @@
 // PURPOSE: Thin HTTP client for the GitHub Issues API
 // PURPOSE: ETag caching, pagination via Link header, rate limit tracking
 
-import type { GitHubIssue, GitHubPullRequest, GitHubReview, GitHubEnvConfig } from './types.js';
+import type { GitHubIssue, GitHubPullRequest, GitHubReview, GitHubReaction, GitHubEnvConfig } from './types.js';
 
 export interface RateLimitInfo {
   remaining: number;
@@ -290,6 +290,53 @@ export class GitHubClient {
     }
 
     return await response.json() as Array<{ name: string }>;
+  }
+
+  // ----------------------------------------------------------
+  // Reactions API
+  // ----------------------------------------------------------
+
+  async fetchReactions(issueNumber: number): Promise<GitHubReaction[]> {
+    const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/reactions?per_page=100`;
+    const response = await fetch(url, {
+      headers: this.headers({ 'Accept': 'application/vnd.github.squirrel-girl-preview+json' }),
+    });
+    this.updateRateLimit(response.headers);
+
+    if (!response.ok) {
+      throw new Error(`GitHub API error fetching reactions for #${issueNumber}: ${response.status}`);
+    }
+
+    return await response.json() as GitHubReaction[];
+  }
+
+  // ----------------------------------------------------------
+  // Rate limit
+  // ----------------------------------------------------------
+
+  /**
+   * Check if we should back off based on rate limit state.
+   * Returns the number of ms to wait, or 0 if no backoff needed.
+   */
+  getBackoffMs(warningThreshold = 0.2, criticalThreshold = 0.05): number {
+    const { remaining, limit, reset } = this._rateLimit;
+    if (limit === 0) return 0;
+
+    const ratio = remaining / limit;
+
+    if (ratio <= criticalThreshold) {
+      // Wait until reset
+      const resetMs = (reset * 1000) - Date.now();
+      return Math.max(0, resetMs);
+    }
+
+    if (ratio <= warningThreshold) {
+      // Slow down: linearly scale between 2x and 10x base interval
+      const severity = 1 - (ratio / warningThreshold); // 0..1
+      return Math.floor(severity * 60_000); // up to 60s extra
+    }
+
+    return 0;
   }
 
   /**
