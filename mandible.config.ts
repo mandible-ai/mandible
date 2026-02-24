@@ -6,13 +6,10 @@ import type { Signal, ActionContext } from './src/core/types.js';
 
 const ENV_ROOT = resolve('/tmp/mandible-dashboard');
 
-// Clean slate on startup
 await rm(ENV_ROOT, { recursive: true, force: true });
 await mkdir(ENV_ROOT, { recursive: true });
 
 const env = new FilesystemEnvironment({ root: ENV_ROOT, name: 'demo' });
-
-// ── Simulated work ──────────────────────────────────────────
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -40,8 +37,6 @@ async function simulateMerge(artifact: Record<string, unknown>) {
   await sleep(200 + Math.random() * 500);
   return { merged: true, task: artifact.task, commitHash: Math.random().toString(36).slice(2, 10) };
 }
-
-// ── Colonies ────────────────────────────────────────────────
 
 const shaper = colony('shaper')
   .in(env)
@@ -90,8 +85,6 @@ const keeper = colony('keeper')
   .poll(1500)
   .build();
 
-// ── Seed tasks after a short delay ──────────────────────────
-
 setTimeout(async () => {
   const tasks = [
     { name: 'auth-middleware', priority: 'high', description: 'Add JWT authentication' },
@@ -106,7 +99,7 @@ setTimeout(async () => {
 }, 2000);
 
 export default {
-  environment: env,
+  environments: [env],
   colonies: [shaper, critic, keeper],
   dashboard: { port: 4040, open: true },
 };

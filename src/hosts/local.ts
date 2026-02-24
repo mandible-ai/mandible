@@ -30,6 +30,7 @@ export class LocalHost implements Host<LocalHostMetadata> {
   private _environments: Environment[] = [];
   private _colonyDefs: ColonyDefinition[] = [];
   private _metadata: LocalHostMetadata = { id: '', startedAt: new Date(0), colonies: {} };
+  private _eventBus: import('../core/events.js').EventBus | null = null;
 
   constructor(options?: { name?: string }) {
     this.name = options?.name ?? 'local';
@@ -38,11 +39,13 @@ export class LocalHost implements Host<LocalHostMetadata> {
   get metadata(): LocalHostMetadata { return this._metadata; }
   get colonies(): Array<{ name: string; state: string }> { return this._colonies; }
   get environments(): Environment[] { return this._environments; }
+  get eventBus() { return this._eventBus; }
 
   async start(colonies: ColonyDefinition[]): Promise<void> {
     const { createRuntime } = await import('../core/runtime.js');
     const { EventBus } = await import('../core/events.js');
     const eventBus = new EventBus();
+    this._eventBus = eventBus;
 
     this._colonyDefs = colonies;
 
@@ -85,10 +88,9 @@ export class LocalHost implements Host<LocalHostMetadata> {
     const port = options?.port ?? 4040;
     const open = options?.open ?? true;
     const { startDevServer } = await import('../cli/server.js');
-    const primaryEnv = this._environments[0];
-    if (!primaryEnv) throw new Error('No environments to observe');
+    if (this._environments.length === 0) throw new Error('No environments to observe');
     await startDevServer(
-      { environment: primaryEnv, colonies: this._colonyDefs, dashboard: { port, open } },
+      { environments: this._environments, colonies: this._colonyDefs, dashboard: { port, open } },
       { port, open },
     );
   }

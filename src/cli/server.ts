@@ -19,7 +19,10 @@ export interface SignalServerConfig {
 }
 
 export interface MandibleConfig {
+  /** Single environment (backward compat) */
   environment?: Environment;
+  /** Multiple environments — aggregated in dashboard */
+  environments?: Environment[];
   signalServer?: SignalServerConfig;
   colonies: ColonyDefinition[];
   dashboard?: {
@@ -159,6 +162,27 @@ function connectToSignalServer(
   };
 }
 
+/**
+ * Resolve environments from config with 3-tier fallback:
+ *   1. Explicit environments[] array
+ *   2. Singular environment field
+ *   3. Auto-discover from colony definitions (deduplicated by name)
+ */
+export function resolveEnvironments(config: MandibleConfig): Environment[] {
+  if (config.environments && config.environments.length > 0) {
+    return config.environments;
+  }
+  if (config.environment) {
+    return [config.environment];
+  }
+  // Auto-discover from colony definitions
+  const envMap = new Map<string, Environment>();
+  for (const colony of config.colonies) {
+    envMap.set(colony.environment.name, colony.environment);
+  }
+  return Array.from(envMap.values());
+}
+
 export async function startDevServer(
   config: MandibleConfig,
   options: DevServerOptions
@@ -166,11 +190,12 @@ export async function startDevServer(
   const isCloudMode = !!config.signalServer;
   const eventBus = new EventBus();
   const runtimes: ColonyRuntime[] = [];
+  const environments = isCloudMode ? [] : resolveEnvironments(config);
 
   // In local mode, create runtimes with shared event bus
   if (!isCloudMode) {
-    if (!config.environment) {
-      throw new Error('MandibleConfig requires either environment or signalServer');
+    if (environments.length === 0) {
+      throw new Error('MandibleConfig requires at least one environment, signalServer, or colonies with environments');
     }
     for (const colonyDef of config.colonies) {
       const runtime = createRuntime(colonyDef, { eventBus });
@@ -248,8 +273,16 @@ export async function startDevServer(
         if (isCloudMode) {
           sendJson(res, { signals: latestSnapshot });
         } else {
-          const signals = await config.environment!.snapshot();
-          sendJson(res, { signals });
+          const allSignals: Signal[] = [];
+          for (const env of environments) {
+            const snapshot = await env.snapshot();
+            // Tag each signal with its environment name for dashboard disambiguation
+            for (const signal of snapshot) {
+              (signal as any)._environment = env.name;
+              allSignals.push(signal);
+            }
+          }
+          sendJson(res, { signals: allSignals });
         }
       } else if (url.pathname === '/api/colonies') {
         if (isCloudMode) {
@@ -286,6 +319,8 @@ export async function startDevServer(
           }));
           sendJson(res, { stats });
         }
+      } else if (url.pathname === '/api/environments') {
+        sendJson(res, { environments: environments.map(e => ({ name: e.name })) });
       } else if (url.pathname === '/api/events') {
         sendJson(res, { events: recentEvents });
       } else if (url.pathname === '/api/signals' && req.method === 'POST') {
@@ -295,7 +330,12 @@ export async function startDevServer(
           const signal = await signalServerRelay!.deposit(type, payload ?? {}, tags);
           sendJson(res, { signal }, 201);
         } else {
-          const signal = await config.environment!.deposit({
+          // Route to named environment or default to first
+          const targetName = JSON.parse(body).environment;
+          const targetEnv = targetName
+            ? environments.find(e => e.name === targetName) ?? environments[0]
+            : environments[0];
+          const signal = await targetEnv.deposit({
             type,
             payload: payload ?? {},
             meta: {
@@ -332,12 +372,14 @@ export async function startDevServer(
       broadcastToClients(wss, { type: 'event', data: event });
     });
 
-    // Listen for remote events relayed through the signal server
-    if ('onEvent' in config.environment! && typeof (config.environment as any).onEvent === 'function') {
-      (config.environment as any).onEvent((event: RuntimeEventData) => {
-        pushEvent(event);
-        broadcastToClients(wss, { type: 'event', data: event });
-      });
+    // Listen for remote events relayed through environments
+    for (const env of environments) {
+      if ('onEvent' in env && typeof (env as any).onEvent === 'function') {
+        (env as any).onEvent((event: RuntimeEventData) => {
+          pushEvent(event);
+          broadcastToClients(wss, { type: 'event', data: event });
+        });
+      }
     }
   }
 
@@ -347,8 +389,15 @@ export async function startDevServer(
       if (isCloudMode) {
         signalServerRelay!.snapshot();
       } else {
-        const signals = await config.environment!.snapshot();
-        broadcastToClients(wss, { type: 'snapshot', signals });
+        const allSignals: Signal[] = [];
+        for (const env of environments) {
+          const snapshot = await env.snapshot();
+          for (const signal of snapshot) {
+            (signal as any)._environment = env.name;
+            allSignals.push(signal);
+          }
+        }
+        broadcastToClients(wss, { type: 'snapshot', signals: allSignals });
       }
     } catch { /* ignore snapshot errors */ }
   }, 2000);
