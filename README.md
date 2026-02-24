@@ -485,7 +485,7 @@ Both colonies are wired to real Claude agents via `withClaudeCode`. The dashboar
 - [x] GitHub environment adapter
 - [x] `mandible()` DSL with Host/Environment separation
 - [x] `local()` and `docker()` host implementations
-- [ ] `@mandible-ai/cloud` — run colonies in Edera microVMs via Mandible Cloud
+- [x] `@mandible-ai/cloud` — run colonies in isolation using microVMs via Mandible Cloud
 - [ ] `create-mandible` starter template
 - [ ] Dashboard GIF + landing page
 - [ ] Dolt full implementation
