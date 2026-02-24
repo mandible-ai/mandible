@@ -217,17 +217,45 @@ const host = await mandible('my-swarm')
 
 ### Colony builder
 
-For lower-level control, use the `colony()` builder directly:
+Colony definitions are typically written as standalone configurator functions that return a `ColonyBuilder` callback. This keeps colony logic in its own module, reusable across hosts:
 
 ```typescript
-colony('name')
-  .in(env)                                        // which environment
+// colonies/worker.ts
+import type { ColonyBuilder } from '@mandible-ai/mandible';
+
+export function configureWorker() {
+  return (c: ColonyBuilder) => c
+    .sense('task:ready', { unclaimed: true })
+    .do('process', async (signal, ctx) => {
+      ctx.log(`processing ${signal.id}`);
+      await ctx.deposit('task:done', signal.payload, {
+        causedBy: [signal.id],
+      });
+      await ctx.withdraw(signal.id);
+    })
+    .concurrency(1)
+    .claim('exclusive');
+}
+```
+
+Then wire it into a mandible system:
+
+```typescript
+import { configureWorker } from './colonies/worker.js';
+
+const host = await mandible('my-system')
+  .environment(env)
+  .colony('worker', configureWorker())
+  .start();
+```
+
+The builder supports the full range of colony configuration:
+
+```typescript
+(c: ColonyBuilder) => c
   .sense('type:pattern', { unclaimed: true })     // what to watch for
   .when(signal => signal.payload.priority > 0)    // optional guard
-  .do('shape', withClaudeCode({                   // action provider
-    prompt: signal => `Implement: ${signal.payload.name}`,
-    allowedTools: ['Read', 'Write'],
-  }))
+  .do('shape', handler)                           // action handler
   .concurrency(3)                                 // max parallel agents
   .claim('lease', 30_000)                         // claim strategy
   .poll(2000)                                     // sensor poll interval (ms)
@@ -235,7 +263,6 @@ colony('name')
   .autoWithdraw()                                 // auto-remove processed signals
   .timeout(60_000)                                // action timeout
   .retry(3, 1000)                                 // retry with backoff
-  .build();
 ```
 
 **Claim strategies:**
