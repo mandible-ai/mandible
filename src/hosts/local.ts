@@ -31,6 +31,7 @@ export class LocalHost implements Host<LocalHostMetadata> {
   private _colonyDefs: ColonyDefinition[] = [];
   private _metadata: LocalHostMetadata = { id: '', startedAt: new Date(0), colonies: {} };
   private _eventBus: import('../core/events.js').EventBus | null = null;
+  private _bufferedEvents: import('../core/events.js').RuntimeEventData[] = [];
 
   constructor(options?: { name?: string }) {
     this.name = options?.name ?? 'local';
@@ -46,6 +47,13 @@ export class LocalHost implements Host<LocalHostMetadata> {
     const { EventBus } = await import('../core/events.js');
     const eventBus = new EventBus();
     this._eventBus = eventBus;
+
+    // Buffer events from startup so dashboard can replay them
+    eventBus.on((event) => {
+      if (this._bufferedEvents.length < 1000) {
+        this._bufferedEvents.push(event);
+      }
+    });
 
     this._colonyDefs = colonies;
 
@@ -90,7 +98,7 @@ export class LocalHost implements Host<LocalHostMetadata> {
     const { startDevServer } = await import('../cli/server.js');
     if (this._environments.length === 0) throw new Error('No environments to observe');
     await startDevServer(
-      { environments: this._environments, colonies: this._colonyDefs, dashboard: { port, open }, _eventBus: this._eventBus ?? undefined, _runtimes: this.runtimes },
+      { environments: this._environments, colonies: this._colonyDefs, dashboard: { port, open }, _eventBus: this._eventBus ?? undefined, _runtimes: this.runtimes, _bufferedEvents: this._bufferedEvents },
       { port, open },
     );
   }

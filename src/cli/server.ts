@@ -33,6 +33,8 @@ export interface MandibleConfig {
   _eventBus?: import('../core/events.js').EventBus;
   /** Pre-existing runtimes — for stats reporting when Host manages lifecycle */
   _runtimes?: ColonyRuntime[];
+  /** Buffered events from before the server started */
+  _bufferedEvents?: RuntimeEventData[];
 }
 
 export interface DevServerOptions {
@@ -209,8 +211,8 @@ export async function startDevServer(
     }
   }
 
-  // Collect recent events for reconnecting clients
-  const recentEvents: RuntimeEventData[] = [];
+  // Collect recent events for reconnecting clients — seed with any buffered events
+  const recentEvents: RuntimeEventData[] = config._bufferedEvents ? [...config._bufferedEvents] : [];
   const MAX_RECENT = 500;
 
   function pushEvent(event: RuntimeEventData): void {
