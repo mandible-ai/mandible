@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveEnvironments, type MandibleConfig } from '../../src/cli/server.js';
+import { resolveEnvironments, type SimpleConfig } from '../../src/cli/server.js';
 import type { Environment, Signal, SignalInput, SignalQuery, Subscription, DecayResult } from '../../src/core/types.js';
 
 function stubEnv(name: string): Environment {
@@ -21,7 +21,7 @@ describe('resolveEnvironments', () => {
   it('prefers explicit environments[] array', () => {
     const e1 = stubEnv('alpha');
     const e2 = stubEnv('beta');
-    const config: MandibleConfig = {
+    const config: SimpleConfig = {
       environments: [e1, e2],
       environment: stubEnv('ignored'),
       colonies: [],
@@ -32,7 +32,7 @@ describe('resolveEnvironments', () => {
 
   it('falls back to singular environment field', () => {
     const env = stubEnv('single');
-    const config: MandibleConfig = {
+    const config: SimpleConfig = {
       environment: env,
       colonies: [],
     };
@@ -43,7 +43,7 @@ describe('resolveEnvironments', () => {
   it('auto-discovers from colony definitions, deduplicated by name', () => {
     const e1 = stubEnv('shared');
     const e2 = stubEnv('other');
-    const config: MandibleConfig = {
+    const config: SimpleConfig = {
       colonies: [
         { name: 'a', environment: e1, rules: [] },
         { name: 'b', environment: e1, rules: [] },
@@ -56,13 +56,13 @@ describe('resolveEnvironments', () => {
   });
 
   it('returns empty array when nothing is configured', () => {
-    const config: MandibleConfig = { colonies: [] };
+    const config: SimpleConfig = { colonies: [] };
     expect(resolveEnvironments(config)).toEqual([]);
   });
 
   it('ignores empty environments[] and falls back', () => {
     const env = stubEnv('fallback');
-    const config: MandibleConfig = {
+    const config: SimpleConfig = {
       environments: [],
       environment: env,
       colonies: [],

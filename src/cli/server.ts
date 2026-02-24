@@ -1,171 +1,112 @@
-// PURPOSE: Dashboard Server — HTTP + WebSocket for real-time observability
-// PURPOSE: Supports local mode (direct Environment) and cloud mode (signal server relay)
+// PURPOSE: Dashboard Server — HTTP + WebSocket for real-time local observability
+// PURPOSE: Data flows through DashboardSource interface — no cloud relay, no runtime coupling
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
-import { ColonyRuntime, createRuntime } from '../core/runtime.js';
-import { EventBus, type RuntimeEventData } from '../core/events.js';
+import type { RuntimeEventData } from '../core/events.js';
+import { EventBus } from '../core/events.js';
 import type { ColonyDefinition, Environment, Signal } from '../core/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export interface SignalServerConfig {
-  url: string;
-  apiKey: string;
-  project: string;
-}
+// ── DashboardSource interface ────────────────────────────────
 
-export interface MandibleConfig {
-  /** Single environment (backward compat) */
-  environment?: Environment;
-  /** Multiple environments — aggregated in dashboard */
-  environments?: Environment[];
-  signalServer?: SignalServerConfig;
-  colonies: ColonyDefinition[];
-  dashboard?: {
-    port?: number;
-    open?: boolean;
+export interface ColonyInfo {
+  name: string;
+  state: string;
+  activeCount: number;
+  concurrency: number;
+  stats: {
+    signalsSensed: number;
+    signalsClaimed: number;
+    signalsProcessed: number;
+    signalsDeposited: number;
+    claimConflicts: number;
+    errors: number;
+    avgProcessingMs: number;
   };
-  /** Pre-existing EventBus — if set, skip runtime creation (colonies already running) */
-  _eventBus?: import('../core/events.js').EventBus;
-  /** Pre-existing runtimes — for stats reporting when Host manages lifecycle */
-  _runtimes?: ColonyRuntime[];
-  /** Buffered events from before the server started */
-  _bufferedEvents?: RuntimeEventData[];
 }
 
-export interface DevServerOptions {
-  port: number;
-  open: boolean;
+export interface DashboardSource {
+  /** Subscribe to runtime events */
+  onEvent(callback: (event: RuntimeEventData) => void): void;
+  /** Get current signal snapshot across all environments */
+  snapshot(): Promise<Signal[]>;
+  /** Get colony info */
+  colonies(): ColonyInfo[];
+  /** Get environment names */
+  environments(): string[];
+  /** Deposit a signal from the dashboard inspector */
+  deposit(type: string, payload: Record<string, unknown>, env?: string, tags?: string[]): Promise<Signal>;
+  /** Events buffered before dashboard started */
+  readonly bufferedEvents: RuntimeEventData[];
+  /** Cleanup */
+  close(): void;
 }
 
-/** Connect to signal server, authenticate, and return the WebSocket + helpers */
-function connectToSignalServer(
-  config: SignalServerConfig,
-  callbacks: {
-    onEvent: (event: RuntimeEventData) => void;
-    onSnapshot: (signals: Signal[]) => void;
-    onSignalPush: (signal: Signal) => void;
-    onReady: () => void;
-    onError: (err: Error) => void;
-  },
-): {
-  ws: WebSocket;
-  snapshot: () => void;
-  deposit: (type: string, payload: Record<string, unknown>, tags?: string[]) => Promise<Signal>;
-  close: () => void;
-} {
-  const ws = new WebSocket(config.url);
+// ── LocalDashboardSource ─────────────────────────────────────
 
-  let msgCounter = 0;
-  const pendingRequests = new Map<string, { resolve: (data: any) => void; reject: (err: Error) => void }>();
+export class LocalDashboardSource implements DashboardSource {
+  constructor(
+    private eventBus: EventBus,
+    private envs: Environment[],
+    private colonyInfoFn: () => ColonyInfo[],
+    private _bufferedEvents: RuntimeEventData[] = [],
+  ) {}
 
-  function nextId(): string {
-    return `dash_${++msgCounter}`;
+  onEvent(cb: (event: RuntimeEventData) => void): void {
+    this.eventBus.on(cb);
   }
 
-  function send(msg: Record<string, unknown>): void {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(msg));
+  async snapshot(): Promise<Signal[]> {
+    const all: Signal[] = [];
+    for (const env of this.envs) {
+      const snap = await env.snapshot();
+      for (const s of snap) {
+        (s as any)._environment = env.name;
+        all.push(s);
+      }
     }
+    return all;
   }
 
-  function request<T>(msg: Record<string, unknown>): Promise<T> {
-    const id = nextId();
-    return new Promise((resolve, reject) => {
-      pendingRequests.set(id, { resolve, reject });
-      send({ ...msg, id });
-      setTimeout(() => {
-        if (pendingRequests.has(id)) {
-          pendingRequests.delete(id);
-          reject(new Error(`signal server request timed out: ${msg.type}`));
-        }
-      }, 30_000);
+  colonies(): ColonyInfo[] {
+    return this.colonyInfoFn();
+  }
+
+  environments(): string[] {
+    return this.envs.map(e => e.name);
+  }
+
+  async deposit(type: string, payload: Record<string, unknown>, env?: string, tags?: string[]): Promise<Signal> {
+    const target = env
+      ? this.envs.find(e => e.name === env) ?? this.envs[0]
+      : this.envs[0];
+    return target.deposit({
+      type,
+      payload,
+      meta: { deposited_by: 'dashboard', tags },
     });
   }
 
-  ws.on('open', () => {
-    send({ type: 'auth', apiKey: config.apiKey, project: config.project });
-  });
+  get bufferedEvents(): RuntimeEventData[] {
+    return this._bufferedEvents;
+  }
 
-  ws.on('message', (raw: Buffer | string) => {
-    let msg: any;
-    try {
-      msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString());
-    } catch { return; }
+  close(): void {
+    /* no-op for local */
+  }
+}
 
-    switch (msg.type) {
-      case 'authenticated':
-        // Auth succeeded — subscribe to all signals and request initial snapshot
-        send({ type: 'subscribe', id: nextId(), query: { type: '*' } });
-        callbacks.onReady();
-        break;
+// ── resolveEnvironments ──────────────────────────────────────
 
-      case 'result':
-        if (msg.id && pendingRequests.has(msg.id)) {
-          const pending = pendingRequests.get(msg.id)!;
-          pendingRequests.delete(msg.id);
-          pending.resolve(msg.data);
-        }
-        break;
-
-      case 'error':
-        if (msg.id && pendingRequests.has(msg.id)) {
-          const pending = pendingRequests.get(msg.id)!;
-          pendingRequests.delete(msg.id);
-          pending.reject(new Error(`${msg.code}: ${msg.message}`));
-        } else {
-          callbacks.onError(new Error(`signal server error: ${msg.code} — ${msg.message}`));
-        }
-        break;
-
-      case 'signal':
-        // Subscription push — a new signal was deposited
-        if (msg.signal) {
-          callbacks.onSignalPush(msg.signal);
-        }
-        break;
-
-      case 'event':
-        // Runtime event relayed from a colony in a zone
-        if (msg.data) {
-          callbacks.onEvent(msg.data);
-        }
-        break;
-
-      default:
-        break;
-    }
-  });
-
-  ws.on('error', (err) => {
-    callbacks.onError(err instanceof Error ? err : new Error(String(err)));
-  });
-
-  return {
-    ws,
-    snapshot() {
-      request<Signal[]>({ type: 'snapshot' })
-        .then(signals => callbacks.onSnapshot(signals))
-        .catch(() => { /* ignore snapshot errors */ });
-    },
-    async deposit(type: string, payload: Record<string, unknown>, tags?: string[]): Promise<Signal> {
-      return request<Signal>({
-        type: 'deposit',
-        signal: {
-          type,
-          payload,
-          meta: { deposited_by: 'dashboard', tags },
-        },
-      });
-    },
-    close() {
-      ws.close();
-    },
-  };
+export interface SimpleConfig {
+  environment?: Environment;
+  environments?: Environment[];
+  colonies: ColonyDefinition[];
 }
 
 /**
@@ -174,7 +115,7 @@ function connectToSignalServer(
  *   2. Singular environment field
  *   3. Auto-discover from colony definitions (deduplicated by name)
  */
-export function resolveEnvironments(config: MandibleConfig): Environment[] {
+export function resolveEnvironments(config: SimpleConfig): Environment[] {
   if (config.environments && config.environments.length > 0) {
     return config.environments;
   }
@@ -189,30 +130,18 @@ export function resolveEnvironments(config: MandibleConfig): Environment[] {
   return Array.from(envMap.values());
 }
 
-export async function startDevServer(
-  config: MandibleConfig,
-  options: DevServerOptions
+// ── startDashboard ───────────────────────────────────────────
+
+export interface DashboardOptions {
+  port: number;
+  open: boolean;
+}
+
+export async function startDashboard(
+  source: DashboardSource,
+  options: DashboardOptions,
 ): Promise<void> {
-  const isCloudMode = !!config.signalServer;
-  const hasExternalRuntimes = !!config._runtimes?.length;
-  const eventBus = config._eventBus ?? new EventBus();
-  const runtimes: ColonyRuntime[] = config._runtimes ?? [];
-  const environments = isCloudMode ? [] : resolveEnvironments(config);
-
-  // In local mode, create runtimes with shared event bus
-  // Skip if external runtimes were provided (colonies already running via Host)
-  if (!isCloudMode && !hasExternalRuntimes) {
-    if (environments.length === 0) {
-      throw new Error('MandibleConfig requires at least one environment, signalServer, or colonies with environments');
-    }
-    for (const colonyDef of config.colonies) {
-      const runtime = createRuntime(colonyDef, { eventBus });
-      runtimes.push(runtime);
-    }
-  }
-
-  // Collect recent events for reconnecting clients — seed with any buffered events
-  const recentEvents: RuntimeEventData[] = config._bufferedEvents ? [...config._bufferedEvents] : [];
+  const recentEvents: RuntimeEventData[] = [...source.bufferedEvents];
   const MAX_RECENT = 500;
 
   function pushEvent(event: RuntimeEventData): void {
@@ -222,44 +151,8 @@ export async function startDevServer(
     }
   }
 
-  // In local mode, pipe EventBus events into recent events
-  if (!isCloudMode) {
-    eventBus.on((event) => pushEvent(event));
-  }
-
-  // Signal server relay (cloud mode)
-  let signalServerRelay: ReturnType<typeof connectToSignalServer> | null = null;
-  let latestSnapshot: Signal[] = [];
-
-  if (isCloudMode) {
-    signalServerRelay = connectToSignalServer(config.signalServer!, {
-      onEvent(event) {
-        pushEvent(event);
-        broadcastToClients(wss, { type: 'event', data: event });
-      },
-      onSnapshot(signals) {
-        latestSnapshot = signals;
-        broadcastToClients(wss, { type: 'snapshot', signals });
-      },
-      onSignalPush(signal) {
-        // Update our local snapshot cache
-        const idx = latestSnapshot.findIndex(s => s.id === signal.id);
-        if (idx >= 0) {
-          latestSnapshot[idx] = signal;
-        } else {
-          latestSnapshot.push(signal);
-        }
-      },
-      onReady() {
-        console.log('  connected to signal server');
-        // Request initial snapshot
-        signalServerRelay!.snapshot();
-      },
-      onError(err) {
-        console.error('  signal server error:', err.message);
-      },
-    });
-  }
+  // Pipe source events into recent events
+  source.onEvent((event) => pushEvent(event));
 
   // HTTP server
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -278,83 +171,34 @@ export async function startDevServer(
 
     try {
       if (url.pathname === '/api/state') {
-        if (isCloudMode) {
-          sendJson(res, { signals: latestSnapshot });
-        } else {
-          const allSignals: Signal[] = [];
-          for (const env of environments) {
-            const snapshot = await env.snapshot();
-            // Tag each signal with its environment name for dashboard disambiguation
-            for (const signal of snapshot) {
-              (signal as any)._environment = env.name;
-              allSignals.push(signal);
-            }
-          }
-          sendJson(res, { signals: allSignals });
-        }
+        const signals = await source.snapshot();
+        sendJson(res, { signals });
+
       } else if (url.pathname === '/api/colonies') {
-        if (isCloudMode) {
-          // In cloud mode, report colony defs with placeholder state
-          const colonies = config.colonies.map(c => ({
-            name: c.name,
-            state: 'running',
-            activeCount: 0,
-            concurrency: c.concurrency,
-            stats: { signalsSensed: 0, signalsClaimed: 0, signalsProcessed: 0, signalsDeposited: 0, claimConflicts: 0, errors: 0, avgProcessingMs: 0 },
-          }));
-          sendJson(res, { colonies });
-        } else {
-          const colonies = runtimes.map(rt => ({
-            name: rt.name,
-            state: rt.state,
-            activeCount: rt.activeCount,
-            concurrency: rt.concurrency,
-            stats: rt.stats,
-          }));
-          sendJson(res, { colonies });
-        }
+        sendJson(res, { colonies: source.colonies() });
+
       } else if (url.pathname === '/api/stats') {
-        if (isCloudMode) {
-          const stats = config.colonies.map(c => ({
-            name: c.name,
-            signalsSensed: 0, signalsClaimed: 0, signalsProcessed: 0, signalsDeposited: 0, claimConflicts: 0, errors: 0, avgProcessingMs: 0,
-          }));
-          sendJson(res, { stats });
-        } else {
-          const stats = runtimes.map(rt => ({
-            name: rt.name,
-            ...rt.stats,
-          }));
-          sendJson(res, { stats });
-        }
+        const stats = source.colonies().map(c => ({
+          name: c.name,
+          ...c.stats,
+        }));
+        sendJson(res, { stats });
+
       } else if (url.pathname === '/api/environments') {
-        sendJson(res, { environments: environments.map(e => ({ name: e.name })) });
+        sendJson(res, { environments: source.environments().map(name => ({ name })) });
+
       } else if (url.pathname === '/api/events') {
         sendJson(res, { events: recentEvents });
+
       } else if (url.pathname === '/api/signals' && req.method === 'POST') {
         const body = await readBody(req);
-        const { type, payload, tags } = JSON.parse(body);
-        if (isCloudMode) {
-          const signal = await signalServerRelay!.deposit(type, payload ?? {}, tags);
-          sendJson(res, { signal }, 201);
-        } else {
-          // Route to named environment or default to first
-          const targetName = JSON.parse(body).environment;
-          const targetEnv = targetName
-            ? environments.find(e => e.name === targetName) ?? environments[0]
-            : environments[0];
-          const signal = await targetEnv.deposit({
-            type,
-            payload: payload ?? {},
-            meta: {
-              deposited_by: 'dashboard',
-              tags,
-            },
-          });
-          sendJson(res, { signal }, 201);
-        }
+        const { type, payload, tags, environment: envName } = JSON.parse(body);
+        const signal = await source.deposit(type, payload ?? {}, envName, tags);
+        sendJson(res, { signal }, 201);
+
       } else if (url.pathname === '/' || url.pathname === '/index.html') {
         await serveDashboard(res);
+
       } else {
         res.writeHead(404);
         res.end('Not found');
@@ -370,43 +214,19 @@ export async function startDevServer(
   const wss = new WebSocketServer({ server });
 
   wss.on('connection', (ws: WebSocket) => {
-    // Send recent events on connect for catchup
     ws.send(JSON.stringify({ type: 'init', events: recentEvents.slice(-100) }));
   });
 
-  if (!isCloudMode) {
-    // Forward runtime events to all connected WebSocket clients
-    eventBus.on((event) => {
-      broadcastToClients(wss, { type: 'event', data: event });
-    });
-
-    // Listen for remote events relayed through environments
-    for (const env of environments) {
-      if ('onEvent' in env && typeof (env as any).onEvent === 'function') {
-        (env as any).onEvent((event: RuntimeEventData) => {
-          pushEvent(event);
-          broadcastToClients(wss, { type: 'event', data: event });
-        });
-      }
-    }
-  }
+  // Forward source events to all connected WebSocket clients
+  source.onEvent((event) => {
+    broadcastToClients(wss, { type: 'event', data: event });
+  });
 
   // Periodic snapshot broadcast (for concentration decay animation)
   const snapshotInterval = setInterval(async () => {
     try {
-      if (isCloudMode) {
-        signalServerRelay!.snapshot();
-      } else {
-        const allSignals: Signal[] = [];
-        for (const env of environments) {
-          const snapshot = await env.snapshot();
-          for (const signal of snapshot) {
-            (signal as any)._environment = env.name;
-            allSignals.push(signal);
-          }
-        }
-        broadcastToClients(wss, { type: 'snapshot', signals: allSignals });
-      }
+      const signals = await source.snapshot();
+      broadcastToClients(wss, { type: 'snapshot', signals });
     } catch { /* ignore snapshot errors */ }
   }, 2000);
 
@@ -414,22 +234,6 @@ export async function startDevServer(
   server.listen(options.port, () => {
     console.log(`  dashboard: http://localhost:${options.port}`);
   });
-
-  if (!isCloudMode && runtimes.length > 0) {
-    // Start all colony runtimes (local mode only, skipped when Host already started them)
-    console.log(`  starting ${runtimes.length} colonies...`);
-    for (const runtime of runtimes) {
-      await runtime.start();
-      console.log(`    + ${runtime.name} [running]`);
-    }
-    console.log('');
-  } else if (isCloudMode) {
-    console.log(`  cloud mode — ${config.colonies.length} colonies running in Edera zones`);
-    for (const col of config.colonies) {
-      console.log(`    + ${col.name} [cloud]`);
-    }
-    console.log('');
-  }
 
   // Auto-open browser
   if (options.open) {
@@ -446,17 +250,7 @@ export async function startDevServer(
   const shutdown = async () => {
     console.log('\n  shutting down...');
     clearInterval(snapshotInterval);
-
-    if (isCloudMode) {
-      signalServerRelay?.close();
-      console.log('  signal server connection closed');
-    } else if (runtimes.length > 0) {
-      for (const runtime of runtimes) {
-        await runtime.stop();
-        console.log(`    - ${runtime.name} [stopped]`);
-      }
-    }
-
+    source.close();
     wss.close();
     server.close();
     console.log('  done.\n');
@@ -466,6 +260,8 @@ export async function startDevServer(
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }
+
+// ── Helpers ──────────────────────────────────────────────────
 
 function broadcastToClients(wss: WebSocketServer, data: unknown): void {
   const message = JSON.stringify(data);

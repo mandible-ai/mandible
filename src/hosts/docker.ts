@@ -160,13 +160,35 @@ export class DockerHost implements Host<DockerHostMetadata> {
   async dashboard(options?: DashboardOptions): Promise<void> {
     const port = options?.port ?? 4040;
     const open = options?.open ?? true;
-    const { startDevServer } = await import('../cli/server.js');
-    const primaryEnv = this._environments[0];
-    if (!primaryEnv) throw new Error('No environments to observe');
-    await startDevServer(
-      { environment: primaryEnv, colonies: this._colonyDefs, dashboard: { port, open } },
-      { port, open },
+    const { startDashboard, LocalDashboardSource } = await import('../cli/server.js');
+    const { EventBus } = await import('../core/events.js');
+    if (this._environments.length === 0) throw new Error('No environments to observe');
+
+    const eventBus = new EventBus();
+    // Wire environment onEvent to the bus (if supported)
+    for (const env of this._environments) {
+      if ('onEvent' in env && typeof (env as any).onEvent === 'function') {
+        (env as any).onEvent((event: any) => eventBus.emit(event));
+      }
+    }
+
+    const emptyStats = {
+      signalsSensed: 0, signalsClaimed: 0, signalsProcessed: 0,
+      signalsDeposited: 0, claimConflicts: 0, errors: 0, avgProcessingMs: 0,
+    };
+
+    const source = new LocalDashboardSource(
+      eventBus,
+      this._environments,
+      () => this._colonies.map(c => ({
+        name: c.name,
+        state: c.state,
+        activeCount: 0,
+        concurrency: this._colonyDefs.find(d => d.name === c.name)?.concurrency ?? 1,
+        stats: emptyStats,
+      })),
     );
+    await startDashboard(source, { port, open });
   }
 }
 
