@@ -18,11 +18,16 @@ import { shaper, critic, keeper, SEED_TASKS } from '../code-pipeline/colonies.js
 
 const API_KEY = process.env.MANDIBLE_API_KEY;
 const PROJECT = process.env.MANDIBLE_PROJECT;
+const API_URL = process.env.MANDIBLE_API_URL ?? 'https://api.mandible.cloud';
 const SIGNAL_SERVER_URL = process.env.MANDIBLE_SIGNAL_SERVER ?? 'wss://api.mandible.cloud/v1/signals';
 
 if (!API_KEY || !PROJECT) {
-  console.error('Required env vars: MANDIBLE_API_KEY, MANDIBLE_PROJECT');
-  console.error('Optional: MANDIBLE_SIGNAL_SERVER (default: wss://api.mandible.cloud/v1/signals)');
+  console.error('Required env vars:');
+  console.error('  MANDIBLE_API_KEY  — your mk_... key');
+  console.error('  MANDIBLE_PROJECT  — project ID (proj_...)');
+  console.error('Optional:');
+  console.error('  MANDIBLE_API_URL        (default: https://api.mandible.cloud)');
+  console.error('  MANDIBLE_SIGNAL_SERVER  (default: wss://api.mandible.cloud/v1/signals)');
   process.exit(1);
 }
 
@@ -32,12 +37,32 @@ await mkdir(ENV_ROOT, { recursive: true });
 
 const env = new FilesystemEnvironment({ root: ENV_ROOT, name: 'code-pipeline' });
 
+// Mint a short-lived signal token via the REST API.
+// The signal server has its own auth store — mk_ keys don't work directly.
+// The console does the same thing: POST /v1/projects/{id}/signal-token
+async function mintSignalToken(): Promise<string> {
+  const res = await fetch(`${API_URL}/v1/projects/${PROJECT}/signal-token`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${API_KEY}` },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Failed to mint signal token (${res.status}): ${body}`);
+  }
+  const data = await res.json() as { token: string };
+  return data.token;
+}
+
+console.log('Minting signal token...');
+const signalToken = await mintSignalToken();
+console.log(`  token: ${signalToken.slice(0, 12)}...`);
+
 // Connect to signal server for event relay
 function connectSignalServer(): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(SIGNAL_SERVER_URL);
     ws.on('open', () => {
-      ws.send(JSON.stringify({ type: 'auth', apiKey: API_KEY, project: PROJECT }));
+      ws.send(JSON.stringify({ type: 'auth', apiKey: signalToken, project: PROJECT }));
     });
     ws.on('message', (raw: Buffer | string) => {
       let msg: any;
