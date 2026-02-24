@@ -86,7 +86,7 @@ await host.stop();
 
 #### Docker
 
-Runs each colony as a Docker container via the Mandible Cloud API:
+Runs each colony in a Docker container. Same colony definitions, but the runtime is isolated in containers instead of running in-process:
 
 ```typescript
 import { mandible, FilesystemEnvironment, docker } from '@mandible-ai/mandible';
@@ -95,17 +95,13 @@ const env = new FilesystemEnvironment({ root: './.mandible/signals' });
 
 const host = await mandible('code-pipeline')
   .environment(env)
-  .host(docker({
-    apiUrl: process.env.MANDIBLE_API_URL!,
-    apiKey: process.env.MANDIBLE_API_KEY!,
-    image: 'mandible-colony:latest',
-  }))
+  .host(docker({ image: 'mandible-colony:latest' }))
   .colony('shaper', shaper)
   .colony('critic', critic)
   .colony('keeper', keeper)
   .start();
 
-console.log(host.metadata.projectId);
+await host.dashboard(); // signal snapshots + colony names from containers
 await host.stop();
 ```
 
