@@ -101,6 +101,9 @@ export type { SignalBridge, BridgeStats } from './patterns/bridge.js';
 export { createSentinel } from './patterns/sentinel.js';
 export type { Sentinel, SentinelConfig, SentinelEvaluation, SentinelStats } from './patterns/sentinel.js';
 
+export { createDebugBridge } from './patterns/debug-bridge.js';
+export type { DebugBridge, DebugBridgeConfig } from './patterns/debug-bridge.js';
+
 // Dashboard
 export { startDashboard, LocalDashboardSource, resolveEnvironments } from './cli/server.js';
 export type { DashboardSource, ColonyInfo, DashboardOptions as DashboardServerOptions, SimpleConfig } from './cli/server.js';
