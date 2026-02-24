@@ -29,6 +29,8 @@ export interface MandibleConfig {
     port?: number;
     open?: boolean;
   };
+  /** Pre-existing EventBus — if set, skip runtime creation (colonies already running) */
+  _eventBus?: import('../core/events.js').EventBus;
 }
 
 export interface DevServerOptions {
@@ -188,12 +190,14 @@ export async function startDevServer(
   options: DevServerOptions
 ): Promise<void> {
   const isCloudMode = !!config.signalServer;
-  const eventBus = new EventBus();
+  const hasExternalEventBus = !!config._eventBus;
+  const eventBus = config._eventBus ?? new EventBus();
   const runtimes: ColonyRuntime[] = [];
   const environments = isCloudMode ? [] : resolveEnvironments(config);
 
   // In local mode, create runtimes with shared event bus
-  if (!isCloudMode) {
+  // Skip if an external eventBus was provided (colonies already running via Host)
+  if (!isCloudMode && !hasExternalEventBus) {
     if (environments.length === 0) {
       throw new Error('MandibleConfig requires at least one environment, signalServer, or colonies with environments');
     }
@@ -407,15 +411,15 @@ export async function startDevServer(
     console.log(`  dashboard: http://localhost:${options.port}`);
   });
 
-  if (!isCloudMode) {
-    // Start all colony runtimes (local mode only)
+  if (!isCloudMode && runtimes.length > 0) {
+    // Start all colony runtimes (local mode only, skipped when Host already started them)
     console.log(`  starting ${runtimes.length} colonies...`);
     for (const runtime of runtimes) {
       await runtime.start();
       console.log(`    + ${runtime.name} [running]`);
     }
     console.log('');
-  } else {
+  } else if (isCloudMode) {
     console.log(`  cloud mode — ${config.colonies.length} colonies running in Edera zones`);
     for (const col of config.colonies) {
       console.log(`    + ${col.name} [cloud]`);
@@ -442,7 +446,7 @@ export async function startDevServer(
     if (isCloudMode) {
       signalServerRelay?.close();
       console.log('  signal server connection closed');
-    } else {
+    } else if (runtimes.length > 0) {
       for (const runtime of runtimes) {
         await runtime.stop();
         console.log(`    - ${runtime.name} [stopped]`);

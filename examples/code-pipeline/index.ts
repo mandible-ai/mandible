@@ -48,18 +48,6 @@ for (const task of SEED_TASKS) {
   console.log(`  seeded: task:ready "${task.name}"`);
 }
 
-console.log('\nColonies are self-organizing. Watch signals:');
-console.log(`  watch -n 0.5 'ls ${ENV_ROOT}/signals/'\n`);
+console.log('\nColonies are self-organizing. Watch the dashboard.\n');
 
-// Let colonies work
-await new Promise(r => setTimeout(r, 20_000));
-
-// Report
-const snapshot = await env.snapshot();
-console.log(`\nActive signals: ${snapshot.length}`);
-for (const s of snapshot) {
-  console.log(`  [${s.type}] ${s.payload.task ?? s.payload.name ?? '?'}`);
-}
-
-await host.stop();
-console.log('Stopped.');
+await host.dashboard({ port: 4040 });

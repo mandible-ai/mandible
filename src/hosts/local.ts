@@ -90,7 +90,7 @@ export class LocalHost implements Host<LocalHostMetadata> {
     const { startDevServer } = await import('../cli/server.js');
     if (this._environments.length === 0) throw new Error('No environments to observe');
     await startDevServer(
-      { environments: this._environments, colonies: this._colonyDefs, dashboard: { port, open } },
+      { environments: this._environments, colonies: this._colonyDefs, dashboard: { port, open }, _eventBus: this._eventBus ?? undefined },
       { port, open },
     );
   }
