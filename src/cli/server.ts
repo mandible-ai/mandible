@@ -299,13 +299,23 @@ export async function startDevServer(
             stats: { signalsSensed: 0, signalsClaimed: 0, signalsProcessed: 0, signalsDeposited: 0, claimConflicts: 0, errors: 0, avgProcessingMs: 0 },
           }));
           sendJson(res, { colonies });
-        } else {
+        } else if (runtimes.length > 0) {
           const colonies = runtimes.map(rt => ({
             name: rt.name,
             state: rt.state,
             activeCount: rt.activeCount,
             concurrency: rt.concurrency,
             stats: rt.stats,
+          }));
+          sendJson(res, { colonies });
+        } else {
+          // Host mode — runtimes managed externally, report from colony defs
+          const colonies = config.colonies.map(c => ({
+            name: c.name,
+            state: 'running',
+            activeCount: 0,
+            concurrency: c.concurrency,
+            stats: { signalsSensed: 0, signalsClaimed: 0, signalsProcessed: 0, signalsDeposited: 0, claimConflicts: 0, errors: 0, avgProcessingMs: 0 },
           }));
           sendJson(res, { colonies });
         }
@@ -316,10 +326,16 @@ export async function startDevServer(
             signalsSensed: 0, signalsClaimed: 0, signalsProcessed: 0, signalsDeposited: 0, claimConflicts: 0, errors: 0, avgProcessingMs: 0,
           }));
           sendJson(res, { stats });
-        } else {
+        } else if (runtimes.length > 0) {
           const stats = runtimes.map(rt => ({
             name: rt.name,
             ...rt.stats,
+          }));
+          sendJson(res, { stats });
+        } else {
+          const stats = config.colonies.map(c => ({
+            name: c.name,
+            signalsSensed: 0, signalsClaimed: 0, signalsProcessed: 0, signalsDeposited: 0, claimConflicts: 0, errors: 0, avgProcessingMs: 0,
           }));
           sendJson(res, { stats });
         }
