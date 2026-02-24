@@ -162,7 +162,7 @@ mandible dev mandible.config.ts --port 8080  # custom port
 mandible dev mandible.config.ts --no-open    # skip auto-opening browser
 ```
 
-*Dashboard GIF coming soon*
+![Dashboard](docs/dashboard.png)
 
 ## Architecture
 
