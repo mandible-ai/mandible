@@ -105,9 +105,9 @@ await host.dashboard(); // signal snapshots + colony names from containers
 await host.stop();
 ```
 
-#### Cloud (Edera microVMs)
+#### Cloud (microVMs)
 
-For production workloads, run colonies in isolated Edera zones via [Mandible Cloud](https://mandible.dev):
+For production workloads, run colonies in isolated zones via [Mandible Cloud](https://mandible.cloud):
 
 ```typescript
 import { mandible, FilesystemEnvironment } from '@mandible-ai/mandible';
