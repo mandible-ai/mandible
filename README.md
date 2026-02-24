@@ -288,6 +288,8 @@ Action providers wrap external capabilities into a standard interface for colony
 
 The provider assembles context by walking signal lineage (`caused_by` chains), giving the agent full awareness of the work pipeline state.
 
+See [Action Providers Guide](docs/how-to/action-providers.md) for full configuration reference, output mapping, and context assembly.
+
 ## Signal types
 
 Signal types use a `domain:state` convention and support glob patterns for sensing:
@@ -345,7 +347,7 @@ const env = new GitHubEnvironment({
 
 ### Writing your own
 
-Implement the `Environment` interface:
+Implement the `Environment` interface (see [Custom Environment Guide](docs/how-to/custom-environment.md) for a full walkthrough):
 
 ```typescript
 interface Environment {
@@ -380,7 +382,7 @@ Built-in hosts: `local()` (in-process), `docker()` (containers). Cloud hosts liv
 
 ## Patterns
 
-Reusable coordination patterns built on top of the core primitives.
+Reusable coordination patterns built on top of the core primitives. See [Bridging Signals](docs/how-to/bridge-signals.md) and [Monitoring Trust](docs/how-to/monitor-trust.md) for detailed usage.
 
 ### SignalBridge
 
@@ -399,9 +401,25 @@ const bridge = createBridge({
 await bridge.start();
 ```
 
+### DebugBridge
+
+One-way gate from a signal server into a local environment. Enables ad-hoc testing from the cloud console — deposit a signal in the console and it flows through the WebSocket into the colony's real environment.
+
+```typescript
+import { createDebugBridge } from '@mandible-ai/mandible';
+
+const bridge = createDebugBridge({
+  url: 'wss://signals.mandible.cloud/ws',
+  apiKey: 'mnd_...',
+  project: 'my-project',
+  environment: localEnv,
+});
+await bridge.start();
+```
+
 ### Sentinel
 
-Trust monitoring colony that watches an environment for signals with invalid or missing provenance. When violations are detected, the sentinel deposits `trust:violation` report signals that other colonies can react to.
+Trust monitoring colony that watches an environment for signals with invalid or missing provenance. When violations are detected, the sentinel deposits `sentinel:flagged` report signals that other colonies can react to.
 
 ```typescript
 import { createSentinel } from '@mandible-ai/mandible';
@@ -446,6 +464,7 @@ src/
     context.ts          Context assembly from signal lineage
   patterns/
     bridge.ts           SignalBridge — cross-environment mirroring with attestation
+    debug-bridge.ts     DebugBridge — signal server → environment gate
     sentinel.ts         Sentinel — trust monitoring and violation reporting
 
 tests/
@@ -455,6 +474,13 @@ tests/
   dsl/                  DSL and mandible() builder tests
   providers/            Agent, structured output, bash provider tests
   colonies/             Integration tests for colony workflows
+
+docs/
+  how-to/
+    bridge-signals.md   SignalBridge + DebugBridge usage guide
+    action-providers.md withClaudeCode, withStructuredOutput, withBash reference
+    monitor-trust.md    Sentinel pattern + trust policies
+    custom-environment.md Implementing the Environment interface
 
 examples/
   code-pipeline/
@@ -508,7 +534,7 @@ Both colonies are wired to real Claude agents via `withClaudeCode`. The dashboar
 
 - [x] `mandible dev` CLI + live dashboard
 - [x] `withClaudeCode` wired to Claude Code SDK
-- [x] Test suite (462 tests, 95%+ coverage)
+- [x] Test suite (473 tests, 95%+ coverage)
 - [x] GitHub environment adapter
 - [x] `mandible()` DSL with Host/Environment separation
 - [x] `local()` and `docker()` host implementations
