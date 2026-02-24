@@ -1,5 +1,5 @@
-// PURPOSE: GitHub environment adapter — GitHub Issues as a stigmergy substrate
-// PURPOSE: Polling with ETag caching, concentration reinforcement, advisory claims
+// PURPOSE: GitHub environment adapter — GitHub Issues + PRs as a stigmergy substrate
+// PURPOSE: Polling with ETag caching, concentration reinforcement, label-based claims
 
 import type {
   Environment, Signal, SignalQuery, SignalMeta,
@@ -8,12 +8,15 @@ import type {
 import { matchesQuery, isClaimExpired } from '../../core/signal.js';
 import { validateSignalInput } from '../../core/validation.js';
 import { GitHubClient } from './client.js';
-import type { GitHubEnvConfig, GitHubIssue } from './types.js';
+import type { GitHubEnvConfig, GitHubIssue, GitHubPullRequest, GitHubReview } from './types.js';
 import {
   defaultTypeMapper,
   defaultPayloadMapper,
   defaultConcentrationMapper,
   defaultDependencyMapper,
+  defaultPRTypeMapper,
+  defaultPRPayloadMapper,
+  defaultPRConcentrationMapper,
   computeDependencyBoosts,
 } from './mapper.js';
 
@@ -26,12 +29,23 @@ export class GitHubEnvironment implements Environment {
   private readonly concentrationMapper: (issue: GitHubIssue, config: GitHubEnvConfig) => number;
   private readonly dependencyMapper: (issue: GitHubIssue, config: GitHubEnvConfig) => string[];
   private readonly issueFilter: ((issue: GitHubIssue) => boolean) | undefined;
+  private readonly prTypeMapper: (pr: GitHubPullRequest, reviews: GitHubReview[]) => string;
+  private readonly prPayloadMapper: (pr: GitHubPullRequest, reviews: GitHubReview[]) => Record<string, unknown>;
+  private readonly prConcentrationMapper: (pr: GitHubPullRequest, reviews: GitHubReview[], config: GitHubEnvConfig) => number;
+  private readonly prFilter: ((pr: GitHubPullRequest) => boolean) | undefined;
+  private readonly includePRs: boolean;
+  private readonly includeIssues: boolean;
+  private readonly fetchReviews: boolean;
+  private readonly persistentClaims: boolean;
+  private readonly claimLabelPrefix: string;
   private readonly decayRate: number;
   private readonly concentrationFloor: number;
 
   // In-memory signal cache — GitHub API is source of truth
   private signals = new Map<string, Signal>();
   private withdrawn = new Map<string, Signal>();
+  // Cache of reviews per PR number
+  private prReviews = new Map<number, GitHubReview[]>();
 
   // Tracking for decay
   private lastSyncAt: number = Date.now();
@@ -47,6 +61,15 @@ export class GitHubEnvironment implements Environment {
     this.concentrationMapper = config.concentrationMapper ?? defaultConcentrationMapper;
     this.dependencyMapper = config.dependencyMapper ?? defaultDependencyMapper;
     this.issueFilter = config.issueFilter;
+    this.prTypeMapper = config.prTypeMapper ?? defaultPRTypeMapper;
+    this.prPayloadMapper = config.prPayloadMapper ?? defaultPRPayloadMapper;
+    this.prConcentrationMapper = config.prConcentrationMapper ?? defaultPRConcentrationMapper;
+    this.prFilter = config.prFilter;
+    this.includePRs = config.includePRs !== false;
+    this.includeIssues = config.includeIssues !== false;
+    this.fetchReviews = config.fetchReviews !== false;
+    this.persistentClaims = config.persistentClaims ?? false;
+    this.claimLabelPrefix = config.claimLabelPrefix ?? 'mandible:claimed';
     this.decayRate = config.decayRate ?? 0.001;
     this.concentrationFloor = config.concentrationFloor ?? 0.05;
   }
@@ -75,6 +98,15 @@ export class GitHubEnvironment implements Environment {
     const concentration = this.concentrationMapper(issue, this.config);
     const tags = issue.labels.map(l => l.name);
 
+    // Restore persistent claim from labels
+    let claimed_by: string | undefined;
+    if (this.persistentClaims) {
+      const claimLabel = issue.labels.find(l => l.name.startsWith(this.claimLabelPrefix + ':'));
+      if (claimLabel) {
+        claimed_by = claimLabel.name.slice(this.claimLabelPrefix.length + 1);
+      }
+    }
+
     const signal: Signal = {
       id,
       type,
@@ -84,6 +116,7 @@ export class GitHubEnvironment implements Environment {
         deposited_by: 'github',
         concentration,
         tags,
+        ...(claimed_by ? { claimed_by, claimed_at: Date.now() } : {}),
       },
     };
 
@@ -97,6 +130,40 @@ export class GitHubEnvironment implements Environment {
   }
 
   // ----------------------------------------------------------
+  // PR → Signal conversion
+  // ----------------------------------------------------------
+
+  private prToSignal(pr: GitHubPullRequest, reviews: GitHubReview[]): Signal {
+    const id = this.signalId(pr.number);
+    const type = this.prTypeMapper(pr, reviews);
+    const payload = this.prPayloadMapper(pr, reviews);
+    const concentration = this.prConcentrationMapper(pr, reviews, this.config);
+    const tags = pr.labels.map(l => l.name);
+
+    // Restore persistent claim from labels
+    let claimed_by: string | undefined;
+    if (this.persistentClaims) {
+      const claimLabel = pr.labels.find(l => l.name.startsWith(this.claimLabelPrefix + ':'));
+      if (claimLabel) {
+        claimed_by = claimLabel.name.slice(this.claimLabelPrefix.length + 1);
+      }
+    }
+
+    return {
+      id,
+      type,
+      payload,
+      meta: {
+        deposited_at: new Date(pr.created_at).getTime(),
+        deposited_by: 'github',
+        concentration,
+        tags,
+        ...(claimed_by ? { claimed_by, claimed_at: Date.now() } : {}),
+      },
+    };
+  }
+
+  // ----------------------------------------------------------
   // Sync from GitHub API
   // ----------------------------------------------------------
 
@@ -107,54 +174,51 @@ export class GitHubEnvironment implements Environment {
   }
 
   /**
-   * Core sync method. Fetches issues from GitHub and updates local cache.
+   * Core sync method. Fetches issues and PRs from GitHub and updates local cache.
    * Returns the list of new signal IDs that appeared since last sync.
    */
   async syncFromGitHub(): Promise<string[]> {
-    const result = await this.client.fetchIssues();
-
-    // 304 Not Modified — no changes since last poll
-    if (result.issues === null) {
-      this.lastSyncAt = Date.now();
-      return [];
-    }
-
     const newSignalIds: string[] = [];
-    const seenIds = new Set<string>();
 
-    for (const issue of result.issues) {
-      // Skip pull requests (GitHub returns PRs in the issues endpoint)
-      if (issue.pull_request) continue;
+    // Sync issues
+    if (this.includeIssues) {
+      const result = await this.client.fetchIssues();
+      if (result.issues !== null) {
+        for (const issue of result.issues) {
+          // Skip pull requests (GitHub returns PRs in the issues endpoint)
+          if (issue.pull_request) continue;
+          if (this.issueFilter && !this.issueFilter(issue)) continue;
 
-      // Apply custom filter
-      if (this.issueFilter && !this.issueFilter(issue)) continue;
-
-      const freshSignal = this.issueToSignal(issue);
-      seenIds.add(freshSignal.id);
-
-      const existing = this.signals.get(freshSignal.id);
-      if (existing) {
-        // Reinforcement: take the max of current and fresh concentration
-        // Preserve claim state from local cache
-        freshSignal.meta.concentration = Math.max(
-          existing.meta.concentration,
-          freshSignal.meta.concentration
-        );
-        freshSignal.meta.claimed_by = existing.meta.claimed_by;
-        freshSignal.meta.claimed_at = existing.meta.claimed_at;
-        freshSignal.meta.claim_lease = existing.meta.claim_lease;
-      } else {
-        newSignalIds.push(freshSignal.id);
+          const freshSignal = this.issueToSignal(issue);
+          this.mergeSignal(freshSignal, newSignalIds);
+        }
       }
-
-      this.signals.set(freshSignal.id, freshSignal);
     }
 
-    // Issues that disappeared from the API (closed externally) are NOT removed.
-    // They stop being reinforced and natural decay handles evaporation.
-    // This is the stigmergy way: absence of reinforcement = signal fades.
+    // Sync pull requests
+    if (this.includePRs) {
+      const prResult = await this.client.fetchPullRequests();
+      if (prResult.prs !== null) {
+        for (const pr of prResult.prs) {
+          if (this.prFilter && !this.prFilter(pr)) continue;
 
-    // Apply dependency-aware concentration adjustments (boosts and penalties)
+          let reviews: GitHubReview[] = [];
+          if (this.fetchReviews) {
+            try {
+              reviews = await this.client.fetchReviews(pr.number);
+            } catch {
+              // Use empty reviews on failure — signal still gets created
+            }
+            this.prReviews.set(pr.number, reviews);
+          }
+
+          const freshSignal = this.prToSignal(pr, reviews);
+          this.mergeSignal(freshSignal, newSignalIds);
+        }
+      }
+    }
+
+    // Apply dependency-aware concentration adjustments
     const boosts = computeDependencyBoosts(this.signals, {
       rootBoost: this.config.dependencyBoost?.rootBoost,
       dependentBoost: this.config.dependencyBoost?.dependentBoost,
@@ -173,6 +237,25 @@ export class GitHubEnvironment implements Environment {
 
     this.lastSyncAt = Date.now();
     return newSignalIds;
+  }
+
+  private mergeSignal(freshSignal: Signal, newSignalIds: string[]): void {
+    const existing = this.signals.get(freshSignal.id);
+    if (existing) {
+      freshSignal.meta.concentration = Math.max(
+        existing.meta.concentration,
+        freshSignal.meta.concentration
+      );
+      // Preserve in-memory claim state unless using persistent claims
+      if (!this.persistentClaims) {
+        freshSignal.meta.claimed_by = existing.meta.claimed_by;
+        freshSignal.meta.claimed_at = existing.meta.claimed_at;
+        freshSignal.meta.claim_lease = existing.meta.claim_lease;
+      }
+    } else {
+      newSignalIds.push(freshSignal.id);
+    }
+    this.signals.set(freshSignal.id, freshSignal);
   }
 
   /**
@@ -260,12 +343,27 @@ export class GitHubEnvironment implements Environment {
       if (!isClaimExpired(signal)) {
         return false; // Already claimed and not expired
       }
-      // Expired claim — allow takeover
+      // Expired claim — allow takeover. Remove old persistent label if needed.
+      if (this.persistentClaims) {
+        const issueNumber = this.issueNumberFromSignalId(signalId);
+        const oldLabel = `${this.claimLabelPrefix}:${signal.meta.claimed_by}`;
+        if (issueNumber !== null) {
+          await this.client.removeLabel(issueNumber, oldLabel);
+        }
+      }
     }
 
     signal.meta.claimed_by = claimant;
     signal.meta.claimed_at = Date.now();
     signal.meta.claim_lease = leaseDuration;
+
+    // Persist claim as a GitHub label
+    if (this.persistentClaims) {
+      const issueNumber = this.issueNumberFromSignalId(signalId);
+      if (issueNumber !== null) {
+        await this.client.addLabel(issueNumber, `${this.claimLabelPrefix}:${claimant}`);
+      }
+    }
 
     return true;
   }
@@ -275,6 +373,17 @@ export class GitHubEnvironment implements Environment {
 
     const signal = this.signals.get(signalId);
     if (!signal) return;
+
+    // Remove persistent claim label
+    if (this.persistentClaims && signal.meta.claimed_by) {
+      const issueNumber = this.issueNumberFromSignalId(signalId);
+      if (issueNumber !== null) {
+        await this.client.removeLabel(
+          issueNumber,
+          `${this.claimLabelPrefix}:${signal.meta.claimed_by}`
+        );
+      }
+    }
 
     signal.meta.claimed_by = undefined;
     signal.meta.claimed_at = undefined;

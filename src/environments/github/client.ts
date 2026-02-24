@@ -1,7 +1,7 @@
 // PURPOSE: Thin HTTP client for the GitHub Issues API
 // PURPOSE: ETag caching, pagination via Link header, rate limit tracking
 
-import type { GitHubIssue, GitHubEnvConfig } from './types.js';
+import type { GitHubIssue, GitHubPullRequest, GitHubReview, GitHubEnvConfig } from './types.js';
 
 export interface RateLimitInfo {
   remaining: number;
@@ -186,10 +186,117 @@ export class GitHubClient {
     }
   }
 
+  // ----------------------------------------------------------
+  // Pull Requests API
+  // ----------------------------------------------------------
+
+  private _prEtag: string | null = null;
+
+  async fetchPullRequests(): Promise<{ prs: GitHubPullRequest[] | null; rateLimit: RateLimitInfo }> {
+    const params = new URLSearchParams({
+      state: 'open',
+      per_page: '100',
+      sort: 'updated',
+      direction: 'desc',
+    });
+
+    const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/pulls?${params}`;
+
+    const extraHeaders: Record<string, string> = {};
+    if (this._prEtag) {
+      extraHeaders['If-None-Match'] = this._prEtag;
+    }
+
+    const response = await fetch(url, { headers: this.headers(extraHeaders) });
+    this.updateRateLimit(response.headers);
+
+    if (response.status === 304) {
+      return { prs: null, rateLimit: this.rateLimitInfo };
+    }
+
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status} ${response.statusText} for ${url}`);
+    }
+
+    const etag = response.headers.get('etag');
+    if (etag) this._prEtag = etag;
+
+    let prs: GitHubPullRequest[] = await response.json() as GitHubPullRequest[];
+
+    let nextUrl = this.parseNextLink(response.headers.get('link'));
+    while (nextUrl) {
+      const pageResponse = await fetch(nextUrl, { headers: this.headers() });
+      this.updateRateLimit(pageResponse.headers);
+      if (!pageResponse.ok) break;
+      const pagePRs = await pageResponse.json() as GitHubPullRequest[];
+      prs = prs.concat(pagePRs);
+      nextUrl = this.parseNextLink(pageResponse.headers.get('link'));
+    }
+
+    return { prs, rateLimit: this.rateLimitInfo };
+  }
+
+  async fetchReviews(prNumber: number): Promise<GitHubReview[]> {
+    const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/pulls/${prNumber}/reviews?per_page=100`;
+    const response = await fetch(url, { headers: this.headers() });
+    this.updateRateLimit(response.headers);
+
+    if (!response.ok) {
+      throw new Error(`GitHub API error fetching reviews for PR #${prNumber}: ${response.status}`);
+    }
+
+    return await response.json() as GitHubReview[];
+  }
+
+  // ----------------------------------------------------------
+  // Label-based persistent claims
+  // ----------------------------------------------------------
+
+  async addLabel(issueNumber: number, label: string): Promise<void> {
+    const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/labels`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: this.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ labels: [label] }),
+    });
+    this.updateRateLimit(response.headers);
+
+    if (!response.ok) {
+      throw new Error(`GitHub API error adding label to #${issueNumber}: ${response.status}`);
+    }
+  }
+
+  async removeLabel(issueNumber: number, label: string): Promise<void> {
+    const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/labels/${encodeURIComponent(label)}`;
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: this.headers(),
+    });
+    this.updateRateLimit(response.headers);
+
+    // 404 = label wasn't there, that's fine
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`GitHub API error removing label from #${issueNumber}: ${response.status}`);
+    }
+  }
+
+  async getLabels(issueNumber: number): Promise<Array<{ name: string }>> {
+    const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/labels`;
+    const response = await fetch(url, { headers: this.headers() });
+    this.updateRateLimit(response.headers);
+
+    if (!response.ok) {
+      throw new Error(`GitHub API error fetching labels for #${issueNumber}: ${response.status}`);
+    }
+
+    return await response.json() as Array<{ name: string }>;
+  }
+
   /**
    * Reset the stored ETag (forces a fresh fetch on next call).
    */
   resetETag(): void {
     this._etag = null;
+    this._prEtag = null;
   }
 }

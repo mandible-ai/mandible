@@ -17,14 +17,60 @@ export interface GitHubIssue {
   updated_at: string;
   html_url: string;
   comments: number;
-  pull_request?: unknown; // present = this is a PR, skip it
+  pull_request?: unknown; // present = this is a PR via issues endpoint
 }
 
 // ----------------------------------------------------------
-// Concentration mapper — pluggable scoring function
+// GitHub Pull Request — subset of Pulls API response
+// ----------------------------------------------------------
+
+export interface GitHubPullRequest {
+  number: number;
+  title: string;
+  body: string | null;
+  state: 'open' | 'closed';
+  draft: boolean;
+  merged: boolean;
+  merged_at: string | null;
+  labels: Array<{ name: string }>;
+  assignee: { login: string } | null;
+  user: { login: string };
+  milestone: { title: string } | null;
+  created_at: string;
+  updated_at: string;
+  html_url: string;
+  comments: number;
+  review_comments: number;
+  commits: number;
+  additions: number;
+  deletions: number;
+  changed_files: number;
+  head: { ref: string; sha: string };
+  base: { ref: string; sha: string };
+  requested_reviewers: Array<{ login: string }>;
+  mergeable_state?: string;
+}
+
+// ----------------------------------------------------------
+// GitHub Review — subset of Reviews API response
+// ----------------------------------------------------------
+
+export type ReviewState = 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED' | 'PENDING';
+
+export interface GitHubReview {
+  id: number;
+  user: { login: string };
+  state: ReviewState;
+  body: string | null;
+  submitted_at: string;
+}
+
+// ----------------------------------------------------------
+// Concentration mappers
 // ----------------------------------------------------------
 
 export type ConcentrationMapper = (issue: GitHubIssue, config: GitHubEnvConfig) => number;
+export type PRConcentrationMapper = (pr: GitHubPullRequest, reviews: GitHubReview[], config: GitHubEnvConfig) => number;
 
 // ----------------------------------------------------------
 // GitHub Environment Config
@@ -73,6 +119,33 @@ export interface GitHubEnvConfig {
 
   /** Additional filter applied after fetching issues. Default: none */
   issueFilter?: (issue: GitHubIssue) => boolean;
+
+  /** Include pull requests as signals. Default: true */
+  includePRs?: boolean;
+
+  /** Include issues as signals. Default: true */
+  includeIssues?: boolean;
+
+  /** Custom signal type mapper for PRs. Default: derives from state + review status */
+  prTypeMapper?: (pr: GitHubPullRequest, reviews: GitHubReview[]) => string;
+
+  /** Custom payload mapper for PRs. Default: includes PR fields + review summary */
+  prPayloadMapper?: (pr: GitHubPullRequest, reviews: GitHubReview[]) => Record<string, unknown>;
+
+  /** Custom concentration mapper for PRs. Default: composite freshness + review urgency */
+  prConcentrationMapper?: PRConcentrationMapper;
+
+  /** Filter PRs after fetching. Default: none */
+  prFilter?: (pr: GitHubPullRequest) => boolean;
+
+  /** Fetch reviews for each PR (extra API call per PR). Default: true */
+  fetchReviews?: boolean;
+
+  /** Use GitHub labels for persistent claims. Default: false (in-memory) */
+  persistentClaims?: boolean;
+
+  /** Prefix for claim labels. Default: 'mandible:claimed' */
+  claimLabelPrefix?: string;
 
   /** Whether deposit() creates GitHub issues. Default: true */
   allowDeposit?: boolean;

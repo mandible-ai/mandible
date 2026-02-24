@@ -9,12 +9,16 @@ import {
   defaultPayloadMapper,
   defaultConcentrationMapper,
   defaultDependencyMapper,
+  defaultPRTypeMapper,
+  defaultPRPayloadMapper,
+  defaultPRConcentrationMapper,
+  resolveReviewState,
   computeFreshness,
   parseGolemBody,
   parseDependencyIds,
   computeDependencyBoosts,
 } from '../../src/environments/github/mapper.js';
-import type { GitHubIssue, GitHubEnvConfig } from '../../src/environments/github/types.js';
+import type { GitHubIssue, GitHubPullRequest, GitHubReview, GitHubEnvConfig } from '../../src/environments/github/types.js';
 import type { Signal } from '../../src/core/types.js';
 
 // ----------------------------------------------------------
@@ -91,34 +95,160 @@ function createEnv(overrides: Partial<GitHubEnvConfig> = {}): GitHubEnvironment 
   });
 }
 
-// Default handler that returns canned issues
+// Mock PR fixture
+function makePR(overrides: Partial<import('../../src/environments/github/types.js').GitHubPullRequest> = {}): import('../../src/environments/github/types.js').GitHubPullRequest {
+  const now = new Date().toISOString();
+  return {
+    number: 100,
+    title: 'Test PR',
+    body: 'PR body',
+    state: 'open',
+    draft: false,
+    merged: false,
+    merged_at: null,
+    labels: [],
+    assignee: null,
+    user: { login: 'author' },
+    milestone: null,
+    created_at: now,
+    updated_at: now,
+    html_url: 'https://github.com/test/repo/pull/100',
+    comments: 0,
+    review_comments: 0,
+    commits: 1,
+    additions: 10,
+    deletions: 5,
+    changed_files: 2,
+    head: { ref: 'feature-branch', sha: 'abc123' },
+    base: { ref: 'main', sha: 'def456' },
+    requested_reviewers: [],
+    ...overrides,
+  };
+}
+
+function makeReview(overrides: Partial<import('../../src/environments/github/types.js').GitHubReview> = {}): import('../../src/environments/github/types.js').GitHubReview {
+  return {
+    id: 1,
+    user: { login: 'reviewer' },
+    state: 'APPROVED',
+    body: null,
+    submitted_at: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+// Route-aware mock state
+let mockIssues: GitHubIssue[] = [];
+let mockPRs: import('../../src/environments/github/types.js').GitHubPullRequest[] = [];
+let mockReviewsByPR: Map<number, import('../../src/environments/github/types.js').GitHubReview[]> = new Map();
+let mockLabelsAdded: Array<{ number: number; label: string }> = [];
+let mockLabelsRemoved: Array<{ number: number; label: string }> = [];
+
+const rateLimitHeaders = {
+  'x-ratelimit-remaining': '4999',
+  'x-ratelimit-limit': '5000',
+  'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600),
+};
+
+// Default handler that returns canned issues and PRs
 function setMockIssues(issues: GitHubIssue[], etag?: string): void {
-  let requestCount = 0;
-  let sentEtag = etag ?? `"etag-${Date.now()}"`;
+  mockIssues = issues;
+  mockPRs = [];
+  mockReviewsByPR = new Map();
+  mockLabelsAdded = [];
+  mockLabelsRemoved = [];
+  let issueEtag = etag ?? `"etag-issues-${Date.now()}"`;
+  let prEtag = `"etag-prs-${Date.now()}"`;
 
   mockHandler = (req, res) => {
-    requestCount++;
+    const url = req.url ?? '';
 
-    // Check for ETag conditional request
-    const ifNoneMatch = req.headers['if-none-match'];
-    if (ifNoneMatch === sentEtag) {
-      res.writeHead(304, {
-        'x-ratelimit-remaining': '4999',
-        'x-ratelimit-limit': '5000',
-        'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600),
+    // POST labels
+    if (req.method === 'POST' && url.match(/\/issues\/\d+\/labels$/)) {
+      const num = parseInt(url.match(/\/issues\/(\d+)\/labels$/)![1], 10);
+      let body = '';
+      req.on('data', (chunk: Buffer) => { body += chunk; });
+      req.on('end', () => {
+        const parsed = JSON.parse(body);
+        for (const label of parsed.labels) {
+          mockLabelsAdded.push({ number: num, label });
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json', ...rateLimitHeaders });
+        res.end(JSON.stringify(parsed.labels.map((l: string) => ({ name: l }))));
       });
+      return;
+    }
+
+    // DELETE label
+    if (req.method === 'DELETE' && url.match(/\/issues\/\d+\/labels\//)) {
+      const match = url.match(/\/issues\/(\d+)\/labels\/(.+)$/);
+      if (match) {
+        mockLabelsRemoved.push({ number: parseInt(match[1], 10), label: decodeURIComponent(match[2]) });
+      }
+      res.writeHead(200, rateLimitHeaders);
+      res.end();
+      return;
+    }
+
+    // PR reviews
+    if (url.match(/\/pulls\/\d+\/reviews/)) {
+      const prNum = parseInt(url.match(/\/pulls\/(\d+)\/reviews/)![1], 10);
+      const reviews = mockReviewsByPR.get(prNum) ?? [];
+      res.writeHead(200, { 'Content-Type': 'application/json', ...rateLimitHeaders });
+      res.end(JSON.stringify(reviews));
+      return;
+    }
+
+    // Pull requests endpoint
+    if (url.includes('/pulls')) {
+      const ifNoneMatch = req.headers['if-none-match'];
+      if (ifNoneMatch === prEtag) {
+        res.writeHead(304, rateLimitHeaders);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'ETag': prEtag, ...rateLimitHeaders });
+      res.end(JSON.stringify(mockPRs));
+      return;
+    }
+
+    // Issues endpoint (and everything else)
+    const ifNoneMatch = req.headers['if-none-match'];
+    if (ifNoneMatch === issueEtag) {
+      res.writeHead(304, rateLimitHeaders);
       res.end();
       return;
     }
 
     res.writeHead(200, {
       'Content-Type': 'application/json',
-      'ETag': sentEtag,
-      'x-ratelimit-remaining': '4999',
-      'x-ratelimit-limit': '5000',
-      'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600),
+      'ETag': issueEtag,
+      ...rateLimitHeaders,
     });
-    res.end(JSON.stringify(issues));
+    res.end(JSON.stringify(mockIssues));
+  };
+}
+
+function setMockPRs(prs: import('../../src/environments/github/types.js').GitHubPullRequest[], reviews?: Map<number, import('../../src/environments/github/types.js').GitHubReview[]>): void {
+  mockPRs = prs;
+  if (reviews) mockReviewsByPR = reviews;
+}
+
+/** Wrap a custom handler to return [] for /pulls and /reviews endpoints */
+function withPRSupport(handler: (req: IncomingMessage, res: ServerResponse) => void): (req: IncomingMessage, res: ServerResponse) => void {
+  return (req, res) => {
+    const url = req.url ?? '';
+    if (url.match(/\/pulls\/\d+\/reviews/)) {
+      res.writeHead(200, { 'Content-Type': 'application/json', ...rateLimitHeaders });
+      res.end('[]');
+      return;
+    }
+    if (url.includes('/pulls')) {
+      res.writeHead(200, { 'Content-Type': 'application/json', ...rateLimitHeaders });
+      res.end('[]');
+      return;
+    }
+    handler(req, res);
   };
 }
 
@@ -713,7 +843,7 @@ describe('GitHubEnvironment — deposit', () => {
   it('creates a GitHub issue via API', async () => {
     let createdPayload: Record<string, unknown> | null = null;
 
-    mockHandler = (req, res) => {
+    mockHandler = withPRSupport((req, res) => {
       if (req.method === 'POST') {
         let body = '';
         req.on('data', (chunk) => { body += chunk; });
@@ -738,7 +868,7 @@ describe('GitHubEnvironment — deposit', () => {
         'x-ratelimit-reset': '0',
       });
       res.end(JSON.stringify([]));
-    };
+    });
 
     const env = createEnv();
     const signal = await env.deposit({
@@ -774,7 +904,7 @@ describe('GitHubEnvironment — withdraw', () => {
   it('closes the GitHub issue via API', async () => {
     let closedNumber: number | null = null;
 
-    mockHandler = (req, res) => {
+    mockHandler = withPRSupport((req, res) => {
       if (req.method === 'PATCH' && req.url?.match(/\/issues\/\d+$/)) {
         const match = req.url.match(/\/issues\/(\d+)$/);
         closedNumber = match ? parseInt(match[1], 10) : null;
@@ -794,7 +924,7 @@ describe('GitHubEnvironment — withdraw', () => {
         'x-ratelimit-reset': '0',
       });
       res.end(JSON.stringify([makeIssue({ number: 1 })]));
-    };
+    });
 
     const env = createEnv({ allowWithdraw: true });
     await env.sync();
@@ -815,7 +945,7 @@ describe('GitHubEnvironment — withdraw', () => {
   });
 
   it('moves signal to withdrawn cache for history', async () => {
-    mockHandler = (req, res) => {
+    mockHandler = withPRSupport((req, res) => {
       if (req.method === 'PATCH') {
         res.writeHead(200, {
           'Content-Type': 'application/json',
@@ -833,7 +963,7 @@ describe('GitHubEnvironment — withdraw', () => {
         'x-ratelimit-reset': '0',
       });
       res.end(JSON.stringify([makeIssue({ number: 1 })]));
-    };
+    });
 
     const env = createEnv({ allowWithdraw: true });
     await env.sync();
@@ -960,7 +1090,7 @@ describe('GitHubEnvironment — watch', () => {
     const firstIssues = [makeIssue({ number: 1 })];
     const secondIssues = [makeIssue({ number: 1 }), makeIssue({ number: 2, title: 'New' })];
 
-    mockHandler = (req, res) => {
+    mockHandler = withPRSupport((req, res) => {
       callCount++;
       const issues = callCount <= 1 ? firstIssues : secondIssues;
       res.writeHead(200, {
@@ -971,7 +1101,7 @@ describe('GitHubEnvironment — watch', () => {
         'x-ratelimit-reset': '0',
       });
       res.end(JSON.stringify(issues));
-    };
+    });
 
     const env = createEnv({ pollInterval: 100 });
 
@@ -993,7 +1123,7 @@ describe('GitHubEnvironment — watch', () => {
 
   it('stops emitting after unsubscribe', async () => {
     let callCount = 0;
-    mockHandler = (req, res) => {
+    mockHandler = withPRSupport((req, res) => {
       callCount++;
       res.writeHead(200, {
         'Content-Type': 'application/json',
@@ -1003,7 +1133,7 @@ describe('GitHubEnvironment — watch', () => {
         'x-ratelimit-reset': '0',
       });
       res.end(JSON.stringify([makeIssue({ number: callCount })]));
-    };
+    });
 
     const env = createEnv({ pollInterval: 50 });
 
@@ -1152,7 +1282,7 @@ describe('GitHubEnvironment — history', () => {
   });
 
   it('includes withdrawn signals when includeWithdrawn is true', async () => {
-    mockHandler = (req, res) => {
+    mockHandler = withPRSupport((req, res) => {
       if (req.method === 'PATCH') {
         res.writeHead(200, {
           'Content-Type': 'application/json',
@@ -1170,7 +1300,7 @@ describe('GitHubEnvironment — history', () => {
         'x-ratelimit-reset': '0',
       });
       res.end(JSON.stringify([makeIssue({ number: 1 })]));
-    };
+    });
 
     const env = createEnv({ allowWithdraw: true });
     await env.sync();
@@ -1220,7 +1350,7 @@ describe('GitHubEnvironment — pagination', () => {
   it('handles multi-page responses via Link header', async () => {
     let requestCount = 0;
 
-    mockHandler = (req, res) => {
+    mockHandler = withPRSupport((req, res) => {
       requestCount++;
 
       if (requestCount === 1) {
@@ -1244,7 +1374,7 @@ describe('GitHubEnvironment — pagination', () => {
         });
         res.end(JSON.stringify([makeIssue({ number: 2 })]));
       }
-    };
+    });
 
     const env = createEnv();
     const signals = await env.snapshot();
@@ -1479,5 +1609,365 @@ describe('GitHubEnvironment — dependency boost integration', () => {
 
     // With zero boosts, root should have lower (or equal) concentration
     expect(customRoot.meta.concentration).toBeLessThanOrEqual(defaultRoot.meta.concentration);
+  });
+});
+
+// ============================================================
+// PR Mapper Tests
+// ============================================================
+
+describe('resolveReviewState', () => {
+  it('returns pending for empty reviews', () => {
+    expect(resolveReviewState([])).toBe('pending');
+  });
+
+  it('returns approved when latest review is approved', () => {
+    const reviews: GitHubReview[] = [
+      makeReview({ user: { login: 'alice' }, state: 'APPROVED', submitted_at: '2025-01-01T00:00:00Z' }),
+    ];
+    expect(resolveReviewState(reviews)).toBe('approved');
+  });
+
+  it('returns changes-requested when any reviewer requests changes', () => {
+    const reviews: GitHubReview[] = [
+      makeReview({ user: { login: 'alice' }, state: 'APPROVED', submitted_at: '2025-01-01T00:00:00Z' }),
+      makeReview({ user: { login: 'bob' }, state: 'CHANGES_REQUESTED', submitted_at: '2025-01-01T00:00:00Z' }),
+    ];
+    expect(resolveReviewState(reviews)).toBe('changes-requested');
+  });
+
+  it('uses most recent review per reviewer', () => {
+    const reviews: GitHubReview[] = [
+      makeReview({ user: { login: 'alice' }, state: 'CHANGES_REQUESTED', submitted_at: '2025-01-01T00:00:00Z' }),
+      makeReview({ user: { login: 'alice' }, state: 'APPROVED', submitted_at: '2025-01-02T00:00:00Z' }),
+    ];
+    expect(resolveReviewState(reviews)).toBe('approved');
+  });
+
+  it('returns pending for only COMMENTED reviews', () => {
+    const reviews: GitHubReview[] = [
+      makeReview({ user: { login: 'alice' }, state: 'COMMENTED' }),
+    ];
+    expect(resolveReviewState(reviews)).toBe('pending');
+  });
+});
+
+describe('defaultPRTypeMapper', () => {
+  it('maps draft PR to pr:draft', () => {
+    expect(defaultPRTypeMapper(makePR({ draft: true }), [])).toBe('pr:draft');
+  });
+
+  it('maps merged PR to pr:merged', () => {
+    expect(defaultPRTypeMapper(makePR({ merged: true }), [])).toBe('pr:merged');
+  });
+
+  it('maps closed (not merged) PR to pr:closed', () => {
+    expect(defaultPRTypeMapper(makePR({ state: 'closed', merged: false }), [])).toBe('pr:closed');
+  });
+
+  it('maps security label to pr:security', () => {
+    expect(defaultPRTypeMapper(makePR({ labels: [{ name: 'security' }] }), [])).toBe('pr:security');
+  });
+
+  it('maps approved review state to pr:approved', () => {
+    const reviews = [makeReview({ state: 'APPROVED' })];
+    expect(defaultPRTypeMapper(makePR(), reviews)).toBe('pr:approved');
+  });
+
+  it('maps changes-requested to pr:changes-requested', () => {
+    const reviews = [makeReview({ state: 'CHANGES_REQUESTED' })];
+    expect(defaultPRTypeMapper(makePR(), reviews)).toBe('pr:changes-requested');
+  });
+
+  it('maps PR with requested reviewers to pr:review-requested', () => {
+    expect(defaultPRTypeMapper(makePR({ requested_reviewers: [{ login: 'alice' }] }), [])).toBe('pr:review-requested');
+  });
+
+  it('falls back to pr:open', () => {
+    expect(defaultPRTypeMapper(makePR(), [])).toBe('pr:open');
+  });
+});
+
+describe('defaultPRPayloadMapper', () => {
+  it('includes PR fields', () => {
+    const pr = makePR({ number: 42, title: 'My PR', additions: 100, deletions: 20 });
+    const payload = defaultPRPayloadMapper(pr, []);
+    expect(payload.number).toBe(42);
+    expect(payload.title).toBe('My PR');
+    expect(payload.additions).toBe(100);
+    expect(payload.deletions).toBe(20);
+    expect(payload.author).toBe('author');
+  });
+
+  it('includes review summary when reviews present', () => {
+    const reviews = [makeReview({ user: { login: 'alice' }, state: 'APPROVED' })];
+    const payload = defaultPRPayloadMapper(makePR(), reviews);
+    expect(payload.reviews).toBeDefined();
+    const r = payload.reviews as Record<string, unknown>;
+    expect(r.reviewState).toBe('approved');
+    expect(r.reviewCount).toBe(1);
+    expect(r.reviewers).toEqual(['alice']);
+  });
+
+  it('omits review summary when no reviews', () => {
+    const payload = defaultPRPayloadMapper(makePR(), []);
+    expect(payload.reviews).toBeUndefined();
+  });
+});
+
+describe('defaultPRConcentrationMapper', () => {
+  it('gives higher concentration to PRs with requested reviewers', () => {
+    const config: GitHubEnvConfig = { owner: 'test', repo: 'repo' };
+    const staleDate = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+    const base = defaultPRConcentrationMapper(makePR({ updated_at: staleDate }), [], config);
+    const withReviewers = defaultPRConcentrationMapper(
+      makePR({ updated_at: staleDate, requested_reviewers: [{ login: 'alice' }] }), [], config
+    );
+    expect(withReviewers).toBeGreaterThan(base);
+  });
+
+  it('penalizes draft PRs', () => {
+    const config: GitHubEnvConfig = { owner: 'test', repo: 'repo' };
+    const regular = defaultPRConcentrationMapper(makePR(), [], config);
+    const draft = defaultPRConcentrationMapper(makePR({ draft: true }), [], config);
+    expect(draft).toBeLessThan(regular);
+  });
+
+  it('boosts small PRs', () => {
+    const config: GitHubEnvConfig = { owner: 'test', repo: 'repo' };
+    const small = defaultPRConcentrationMapper(makePR({ additions: 10, deletions: 5 }), [], config);
+    const large = defaultPRConcentrationMapper(makePR({ additions: 400, deletions: 200 }), [], config);
+    expect(small).toBeGreaterThan(large);
+  });
+
+  it('never returns below floor', () => {
+    const config: GitHubEnvConfig = { owner: 'test', repo: 'repo', concentrationFloor: 0.05 };
+    const staleDate = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+    const conc = defaultPRConcentrationMapper(
+      makePR({ draft: true, updated_at: staleDate, additions: 1000, deletions: 500 }), [], config
+    );
+    expect(conc).toBeGreaterThanOrEqual(0.05);
+  });
+});
+
+// ============================================================
+// PR Integration Tests
+// ============================================================
+
+describe('GitHubEnvironment — PR signals', () => {
+  it('includes PRs as signals when includePRs is true (default)', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+    setMockPRs([makePR({ number: 10, title: 'Feature PR' })]);
+
+    const env = createEnv();
+    await env.sync();
+    const signals = await env.snapshot();
+
+    expect(signals.length).toBe(2);
+    expect(signals.find(s => s.id === 'gh:test/repo#1')).toBeDefined();
+    expect(signals.find(s => s.id === 'gh:test/repo#10')).toBeDefined();
+  });
+
+  it('excludes PRs when includePRs is false', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+    setMockPRs([makePR({ number: 10 })]);
+
+    const env = createEnv({ includePRs: false });
+    await env.sync();
+    const signals = await env.snapshot();
+
+    expect(signals.length).toBe(1);
+    expect(signals[0].id).toBe('gh:test/repo#1');
+  });
+
+  it('excludes issues when includeIssues is false', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+    setMockPRs([makePR({ number: 10 })]);
+
+    const env = createEnv({ includeIssues: false });
+    await env.sync();
+    const signals = await env.snapshot();
+
+    expect(signals.length).toBe(1);
+    expect(signals[0].id).toBe('gh:test/repo#10');
+  });
+
+  it('maps PR type from review state', async () => {
+    const reviews = new Map<number, GitHubReview[]>();
+    reviews.set(10, [makeReview({ state: 'APPROVED' })]);
+
+    setMockIssues([]);
+    setMockPRs([makePR({ number: 10 })], reviews);
+
+    const env = createEnv();
+    await env.sync();
+    const signals = await env.snapshot();
+
+    expect(signals[0].type).toBe('pr:approved');
+  });
+
+  it('maps draft PR type', async () => {
+    setMockIssues([]);
+    setMockPRs([makePR({ number: 10, draft: true })]);
+
+    const env = createEnv();
+    await env.sync();
+    const signals = await env.snapshot();
+
+    expect(signals[0].type).toBe('pr:draft');
+  });
+
+  it('includes PR labels as signal tags', async () => {
+    setMockIssues([]);
+    setMockPRs([makePR({ number: 10, labels: [{ name: 'needs-review' }, { name: 'frontend' }] })]);
+
+    const env = createEnv();
+    await env.sync();
+    const signals = await env.snapshot();
+
+    expect(signals[0].meta.tags).toEqual(['needs-review', 'frontend']);
+  });
+
+  it('applies prFilter', async () => {
+    setMockIssues([]);
+    setMockPRs([
+      makePR({ number: 10, draft: false }),
+      makePR({ number: 11, draft: true }),
+    ]);
+
+    const env = createEnv({ prFilter: (pr) => !pr.draft });
+    await env.sync();
+    const signals = await env.snapshot();
+
+    expect(signals.length).toBe(1);
+    expect(signals[0].id).toBe('gh:test/repo#10');
+  });
+
+  it('uses custom prTypeMapper', async () => {
+    setMockIssues([]);
+    setMockPRs([makePR({ number: 10 })]);
+
+    const env = createEnv({ prTypeMapper: () => 'custom:pr-type' });
+    await env.sync();
+    const signals = await env.snapshot();
+
+    expect(signals[0].type).toBe('custom:pr-type');
+  });
+
+  it('skips review fetch when fetchReviews is false', async () => {
+    setMockIssues([]);
+    setMockPRs([makePR({ number: 10 })]);
+
+    const env = createEnv({ fetchReviews: false });
+    await env.sync();
+    const signals = await env.snapshot();
+
+    // Without reviews, an open PR with no reviewers = pr:open
+    expect(signals[0].type).toBe('pr:open');
+  });
+
+  it('observes PRs with type query', async () => {
+    setMockIssues([makeIssue({ number: 1, labels: [{ name: 'bug' }] })]);
+    setMockPRs([makePR({ number: 10 })]);
+
+    const env = createEnv();
+    await env.sync();
+
+    const prs = await env.observe({ type: 'pr:open' });
+    expect(prs.length).toBe(1);
+    expect(prs[0].id).toBe('gh:test/repo#10');
+
+    const bugs = await env.observe({ type: 'issue:bug' });
+    expect(bugs.length).toBe(1);
+    expect(bugs[0].id).toBe('gh:test/repo#1');
+  });
+});
+
+// ============================================================
+// Persistent Claims Tests
+// ============================================================
+
+describe('GitHubEnvironment — persistent claims', () => {
+  it('adds a claim label on claim()', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+
+    const env = createEnv({ persistentClaims: true });
+    await env.sync();
+
+    const result = await env.claim('gh:test/repo#1', 'shaper', 60_000);
+    expect(result).toBe(true);
+    expect(mockLabelsAdded).toEqual([{ number: 1, label: 'mandible:claimed:shaper' }]);
+  });
+
+  it('removes claim label on release()', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+
+    const env = createEnv({ persistentClaims: true });
+    await env.sync();
+    await env.claim('gh:test/repo#1', 'critic', 60_000);
+
+    await env.release('gh:test/repo#1');
+    expect(mockLabelsRemoved).toEqual([{ number: 1, label: 'mandible:claimed:critic' }]);
+  });
+
+  it('uses custom claimLabelPrefix', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+
+    const env = createEnv({ persistentClaims: true, claimLabelPrefix: 'bot:claimed' });
+    await env.sync();
+    await env.claim('gh:test/repo#1', 'keeper', 60_000);
+
+    expect(mockLabelsAdded).toEqual([{ number: 1, label: 'bot:claimed:keeper' }]);
+  });
+
+  it('restores claim state from labels on sync', async () => {
+    setMockIssues([makeIssue({ number: 1, labels: [{ name: 'mandible:claimed:shaper' }] })]);
+
+    const env = createEnv({ persistentClaims: true });
+    await env.sync();
+    const signals = await env.snapshot();
+
+    expect(signals[0].meta.claimed_by).toBe('shaper');
+  });
+
+  it('restores PR claim state from labels on sync', async () => {
+    setMockIssues([]);
+    setMockPRs([makePR({ number: 10, labels: [{ name: 'mandible:claimed:reviewer' }] })]);
+
+    const env = createEnv({ persistentClaims: true });
+    await env.sync();
+    const signals = await env.snapshot();
+
+    expect(signals[0].meta.claimed_by).toBe('reviewer');
+  });
+
+  it('removes old claim label on takeover after lease expiry', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+
+    const env = createEnv({ persistentClaims: true });
+    await env.sync();
+
+    // First claim
+    await env.claim('gh:test/repo#1', 'shaper', 1); // 1ms lease
+    await new Promise(r => setTimeout(r, 10)); // wait for lease to expire
+
+    // Takeover
+    await env.claim('gh:test/repo#1', 'critic', 60_000);
+    expect(mockLabelsRemoved).toEqual([{ number: 1, label: 'mandible:claimed:shaper' }]);
+    expect(mockLabelsAdded.at(-1)).toEqual({ number: 1, label: 'mandible:claimed:critic' });
+  });
+
+  it('in-memory claims work when persistentClaims is false (default)', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+
+    const env = createEnv();
+    await env.sync();
+
+    const result = await env.claim('gh:test/repo#1', 'shaper', 60_000);
+    expect(result).toBe(true);
+    expect(mockLabelsAdded).toEqual([]); // no API calls
+
+    const signals = await env.observe({ unclaimed: true });
+    expect(signals.length).toBe(0); // claimed, so not in unclaimed results
   });
 });

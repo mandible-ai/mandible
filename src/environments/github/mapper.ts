@@ -1,7 +1,7 @@
-// PURPOSE: Default mappers for converting GitHub issues into mandible signals
+// PURPOSE: Default mappers for converting GitHub issues and PRs into mandible signals
 // PURPOSE: Type mapping, payload extraction, concentration scoring, Golem body parsing
 
-import type { GitHubIssue, GitHubEnvConfig } from './types.js';
+import type { GitHubIssue, GitHubPullRequest, GitHubReview, GitHubEnvConfig } from './types.js';
 import type { Signal } from '../../core/types.js';
 
 // ----------------------------------------------------------
@@ -237,6 +237,154 @@ export function defaultConcentrationMapper(
 
   const raw = baseFreshness + commentBoost + assignedBoost + milestoneBoost;
   return Math.max(floor, Math.min(1.0, raw));
+}
+
+// ----------------------------------------------------------
+// PR Type Mapper — state + review status → signal type
+// ----------------------------------------------------------
+
+/**
+ * Determines the latest review verdict for a PR.
+ * Only considers the most recent review per reviewer.
+ */
+export function resolveReviewState(reviews: GitHubReview[]): 'approved' | 'changes-requested' | 'review-requested' | 'pending' {
+  if (reviews.length === 0) return 'pending';
+
+  // Most recent review per reviewer wins
+  const latestByUser = new Map<string, GitHubReview>();
+  for (const review of reviews) {
+    const existing = latestByUser.get(review.user.login);
+    if (!existing || new Date(review.submitted_at) > new Date(existing.submitted_at)) {
+      latestByUser.set(review.user.login, review);
+    }
+  }
+
+  const verdicts = Array.from(latestByUser.values());
+  if (verdicts.some(r => r.state === 'CHANGES_REQUESTED')) return 'changes-requested';
+  if (verdicts.some(r => r.state === 'APPROVED')) return 'approved';
+  return 'pending';
+}
+
+/**
+ * Derives a signal type from PR state and review status.
+ *
+ * Priority order:
+ *   1. Draft PR → 'pr:draft'
+ *   2. Merged → 'pr:merged'
+ *   3. Closed (not merged) → 'pr:closed'
+ *   4. Has label matching a known category → 'pr:{category}'
+ *   5. Review state → 'pr:approved', 'pr:changes-requested'
+ *   6. Has requested reviewers → 'pr:review-requested'
+ *   7. Fallback → 'pr:open'
+ */
+export function defaultPRTypeMapper(pr: GitHubPullRequest, reviews: GitHubReview[]): string {
+  if (pr.draft) return 'pr:draft';
+  if (pr.merged) return 'pr:merged';
+  if (pr.state === 'closed') return 'pr:closed';
+
+  // Check labels for category signals (security, bug, etc.)
+  const labelNames = new Set(pr.labels.map(l => l.name.toLowerCase()));
+  const categories = ['security', 'bug', 'breaking', 'hotfix', 'dependencies'];
+  for (const cat of categories) {
+    if (labelNames.has(cat)) return `pr:${cat}`;
+  }
+
+  // Review state
+  const reviewState = resolveReviewState(reviews);
+  if (reviewState === 'approved') return 'pr:approved';
+  if (reviewState === 'changes-requested') return 'pr:changes-requested';
+
+  if (pr.requested_reviewers.length > 0) return 'pr:review-requested';
+
+  return 'pr:open';
+}
+
+// ----------------------------------------------------------
+// PR Payload Mapper
+// ----------------------------------------------------------
+
+export function defaultPRPayloadMapper(pr: GitHubPullRequest, reviews: GitHubReview[]): Record<string, unknown> {
+  const reviewSummary = reviews.length > 0 ? {
+    reviewState: resolveReviewState(reviews),
+    reviewCount: reviews.length,
+    reviewers: [...new Set(reviews.map(r => r.user.login))],
+    latestReview: reviews[reviews.length - 1] ? {
+      user: reviews[reviews.length - 1].user.login,
+      state: reviews[reviews.length - 1].state,
+      submitted_at: reviews[reviews.length - 1].submitted_at,
+    } : undefined,
+  } : undefined;
+
+  return {
+    number: pr.number,
+    title: pr.title,
+    body: pr.body,
+    state: pr.state,
+    draft: pr.draft,
+    merged: pr.merged,
+    merged_at: pr.merged_at,
+    labels: pr.labels.map(l => l.name),
+    assignee: pr.assignee?.login ?? null,
+    author: pr.user.login,
+    milestone: pr.milestone?.title ?? null,
+    created_at: pr.created_at,
+    updated_at: pr.updated_at,
+    html_url: pr.html_url,
+    head: pr.head,
+    base: pr.base,
+    commits: pr.commits,
+    additions: pr.additions,
+    deletions: pr.deletions,
+    changed_files: pr.changed_files,
+    requested_reviewers: pr.requested_reviewers.map(r => r.login),
+    reviews: reviewSummary,
+  };
+}
+
+// ----------------------------------------------------------
+// PR Concentration Mapper
+// ----------------------------------------------------------
+
+/**
+ * PR concentration based on freshness, review urgency, and size.
+ *
+ * Boosts:
+ *   - Requested reviewers waiting → +0.15
+ *   - Changes requested (needs author action) → +0.1
+ *   - Small PRs (< 100 lines) → +0.05
+ *
+ * Penalties:
+ *   - Draft PRs → -0.2
+ *   - Very large PRs (> 500 lines) → -0.05
+ */
+export function defaultPRConcentrationMapper(
+  pr: GitHubPullRequest,
+  reviews: GitHubReview[],
+  config: GitHubEnvConfig
+): number {
+  const maxStaleHours = config.maxStaleHours ?? 168;
+  const floor = config.concentrationFloor ?? 0.05;
+
+  const updatedAt = new Date(pr.updated_at).getTime();
+  const hoursSinceUpdate = (Date.now() - updatedAt) / (1000 * 60 * 60);
+  const baseFreshness = Math.max(floor, Math.min(1.0, 1.0 - (hoursSinceUpdate / maxStaleHours)));
+
+  let concentration = baseFreshness;
+
+  // Review urgency
+  if (pr.requested_reviewers.length > 0) concentration += 0.15;
+  const reviewState = resolveReviewState(reviews);
+  if (reviewState === 'changes-requested') concentration += 0.1;
+
+  // Size factors
+  const totalLines = pr.additions + pr.deletions;
+  if (totalLines < 100) concentration += 0.05;
+  if (totalLines > 500) concentration -= 0.05;
+
+  // Draft penalty
+  if (pr.draft) concentration -= 0.2;
+
+  return Math.max(floor, Math.min(1.0, concentration));
 }
 
 // ----------------------------------------------------------
