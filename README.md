@@ -86,7 +86,7 @@ await host.stop();
 
 #### Docker
 
-Runs each colony in a Docker container. Same colony definitions, but the runtime is isolated in containers instead of running in-process:
+Runs each colony in a Docker container. Same colony definitions, but the runtime boundary is containers instead of running in-process:
 
 ```typescript
 import { mandible, FilesystemEnvironment, docker } from '@mandible-ai/mandible';
