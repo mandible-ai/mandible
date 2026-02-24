@@ -111,8 +111,38 @@ async function runDev(devArgs: string[]) {
     }
   }
 
-  const { startDevServer } = await import('./server.js');
-  await startDevServer(config, { port, open: openBrowser });
+  const { startDashboard, LocalDashboardSource, resolveEnvironments } = await import('./server.js');
+  const { createRuntime, ColonyRuntime } = await import('../core/runtime.js');
+  const { EventBus } = await import('../core/events.js');
+
+  const environments = resolveEnvironments(config);
+  if (environments.length === 0) {
+    console.error('Config requires at least one environment or colonies with environments');
+    process.exit(1);
+  }
+
+  const eventBus = new EventBus();
+  const runtimes: InstanceType<typeof ColonyRuntime>[] = config.colonies.map((def: any) => createRuntime(def, { eventBus }));
+
+  console.log(`  starting ${runtimes.length} colonies...`);
+  for (const rt of runtimes) {
+    await rt.start();
+    console.log(`    + ${rt.name} [running]`);
+  }
+  console.log('');
+
+  const source = new LocalDashboardSource(
+    eventBus,
+    environments,
+    () => runtimes.map(rt => ({
+      name: rt.name,
+      state: rt.state,
+      activeCount: rt.activeCount,
+      concurrency: rt.concurrency,
+      stats: rt.stats,
+    })),
+  );
+  await startDashboard(source, { port, open: openBrowser });
 }
 
 main().catch((err) => {

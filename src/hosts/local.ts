@@ -48,14 +48,14 @@ export class LocalHost implements Host<LocalHostMetadata> {
     const eventBus = new EventBus();
     this._eventBus = eventBus;
 
+    this._colonyDefs = colonies;
+
     // Buffer events from startup so dashboard can replay them
     eventBus.on((event) => {
       if (this._bufferedEvents.length < 1000) {
         this._bufferedEvents.push(event);
       }
     });
-
-    this._colonyDefs = colonies;
 
     // Start local runtimes for each colony
     for (const def of colonies) {
@@ -95,12 +95,21 @@ export class LocalHost implements Host<LocalHostMetadata> {
   async dashboard(options?: DashboardOptions): Promise<void> {
     const port = options?.port ?? 4040;
     const open = options?.open ?? true;
-    const { startDevServer } = await import('../cli/server.js');
+    const { startDashboard, LocalDashboardSource } = await import('../cli/server.js');
     if (this._environments.length === 0) throw new Error('No environments to observe');
-    await startDevServer(
-      { environments: this._environments, colonies: this._colonyDefs, dashboard: { port, open }, _eventBus: this._eventBus ?? undefined, _runtimes: this.runtimes, _bufferedEvents: this._bufferedEvents },
-      { port, open },
+    const source = new LocalDashboardSource(
+      this._eventBus!,
+      this._environments,
+      () => this.runtimes.map(rt => ({
+        name: rt.name,
+        state: rt.state,
+        activeCount: rt.activeCount,
+        concurrency: rt.concurrency,
+        stats: rt.stats,
+      })),
+      this._bufferedEvents,
     );
+    await startDashboard(source, { port, open });
   }
 }
 

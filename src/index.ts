@@ -101,6 +101,10 @@ export type { SignalBridge, BridgeStats } from './patterns/bridge.js';
 export { createSentinel } from './patterns/sentinel.js';
 export type { Sentinel, SentinelConfig, SentinelEvaluation, SentinelStats } from './patterns/sentinel.js';
 
+// Dashboard
+export { startDashboard, LocalDashboardSource, resolveEnvironments } from './cli/server.js';
+export type { DashboardSource, ColonyInfo, DashboardOptions as DashboardServerOptions, SimpleConfig } from './cli/server.js';
+
 // Action providers
 export { withClaudeCode } from './providers/claude-code.js';
 export { withStructuredOutput } from './providers/structured-output.js';
