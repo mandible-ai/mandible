@@ -25,7 +25,7 @@ export interface LocalHostMetadata extends HostMetadata {
 
 export class LocalHost implements Host<LocalHostMetadata> {
   readonly name: string;
-  private runtimes: Array<{ stop(): Promise<void>; name: string }> = [];
+  private runtimes: Array<import('../core/runtime.js').ColonyRuntime> = [];
   private _colonies: Array<{ name: string; state: string }> = [];
   private _environments: Environment[] = [];
   private _colonyDefs: ColonyDefinition[] = [];
@@ -90,7 +90,7 @@ export class LocalHost implements Host<LocalHostMetadata> {
     const { startDevServer } = await import('../cli/server.js');
     if (this._environments.length === 0) throw new Error('No environments to observe');
     await startDevServer(
-      { environments: this._environments, colonies: this._colonyDefs, dashboard: { port, open }, _eventBus: this._eventBus ?? undefined },
+      { environments: this._environments, colonies: this._colonyDefs, dashboard: { port, open }, _eventBus: this._eventBus ?? undefined, _runtimes: this.runtimes },
       { port, open },
     );
   }

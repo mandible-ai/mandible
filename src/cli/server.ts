@@ -31,6 +31,8 @@ export interface MandibleConfig {
   };
   /** Pre-existing EventBus — if set, skip runtime creation (colonies already running) */
   _eventBus?: import('../core/events.js').EventBus;
+  /** Pre-existing runtimes — for stats reporting when Host manages lifecycle */
+  _runtimes?: ColonyRuntime[];
 }
 
 export interface DevServerOptions {
@@ -190,14 +192,14 @@ export async function startDevServer(
   options: DevServerOptions
 ): Promise<void> {
   const isCloudMode = !!config.signalServer;
-  const hasExternalEventBus = !!config._eventBus;
+  const hasExternalRuntimes = !!config._runtimes?.length;
   const eventBus = config._eventBus ?? new EventBus();
-  const runtimes: ColonyRuntime[] = [];
+  const runtimes: ColonyRuntime[] = config._runtimes ?? [];
   const environments = isCloudMode ? [] : resolveEnvironments(config);
 
   // In local mode, create runtimes with shared event bus
-  // Skip if an external eventBus was provided (colonies already running via Host)
-  if (!isCloudMode && !hasExternalEventBus) {
+  // Skip if external runtimes were provided (colonies already running via Host)
+  if (!isCloudMode && !hasExternalRuntimes) {
     if (environments.length === 0) {
       throw new Error('MandibleConfig requires at least one environment, signalServer, or colonies with environments');
     }
@@ -299,23 +301,13 @@ export async function startDevServer(
             stats: { signalsSensed: 0, signalsClaimed: 0, signalsProcessed: 0, signalsDeposited: 0, claimConflicts: 0, errors: 0, avgProcessingMs: 0 },
           }));
           sendJson(res, { colonies });
-        } else if (runtimes.length > 0) {
+        } else {
           const colonies = runtimes.map(rt => ({
             name: rt.name,
             state: rt.state,
             activeCount: rt.activeCount,
             concurrency: rt.concurrency,
             stats: rt.stats,
-          }));
-          sendJson(res, { colonies });
-        } else {
-          // Host mode — runtimes managed externally, report from colony defs
-          const colonies = config.colonies.map(c => ({
-            name: c.name,
-            state: 'running',
-            activeCount: 0,
-            concurrency: c.concurrency,
-            stats: { signalsSensed: 0, signalsClaimed: 0, signalsProcessed: 0, signalsDeposited: 0, claimConflicts: 0, errors: 0, avgProcessingMs: 0 },
           }));
           sendJson(res, { colonies });
         }
@@ -326,16 +318,10 @@ export async function startDevServer(
             signalsSensed: 0, signalsClaimed: 0, signalsProcessed: 0, signalsDeposited: 0, claimConflicts: 0, errors: 0, avgProcessingMs: 0,
           }));
           sendJson(res, { stats });
-        } else if (runtimes.length > 0) {
+        } else {
           const stats = runtimes.map(rt => ({
             name: rt.name,
             ...rt.stats,
-          }));
-          sendJson(res, { stats });
-        } else {
-          const stats = config.colonies.map(c => ({
-            name: c.name,
-            signalsSensed: 0, signalsClaimed: 0, signalsProcessed: 0, signalsDeposited: 0, claimConflicts: 0, errors: 0, avgProcessingMs: 0,
           }));
           sendJson(res, { stats });
         }
