@@ -175,7 +175,7 @@ Every concept maps to a biological analogy:
 | Mandible | Biology | Description |
 |----------|---------|-------------|
 | **Signal** | Pheromone | A typed marker deposited in the environment with a payload, concentration, and TTL. |
-| **Environment** | Substrate | The shared medium agents read from and write to. Filesystem, GitHub, Remote, Dolt. |
+| **Environment** | Substrate | The shared medium agents read from and write to. Filesystem, GitHub, Dolt. |
 | **Colony** | Ant caste | A group of identical agents with shared sensors, rules, and claim strategy. |
 | **Sensor** | Antennae | How a colony perceives signals. A query pattern like `task:ready` or `review:*`. |
 | **Rule** | Instinct | A stimulus→response mapping: "when I sense X, do Y and deposit Z." |
@@ -400,7 +400,7 @@ src/
     server.ts           Dashboard HTTP + WebSocket server
     dashboard.html      Live dashboard UI
   cloud/
-    index.ts            Cloud client for hosted observability
+    index.ts            Cloud client for deploy + bundle upload
   core/
     types.ts            Core type system (Signal, Environment, Colony, Trust)
     signal.ts           Signal creation, matching, decay, priority sorting
@@ -426,6 +426,7 @@ src/
     sentinel.ts         Sentinel — trust monitoring and violation reporting
 
 tests/
+  cli/                  Dashboard server, resolveEnvironments tests
   core/                 Signal, runtime, attestation tests
   environments/         Filesystem, GitHub adapter tests
   dsl/                  DSL and mandible() builder tests
@@ -484,7 +485,7 @@ Both colonies are wired to real Claude agents via `withClaudeCode`. The dashboar
 
 - [x] `mandible dev` CLI + live dashboard
 - [x] `withClaudeCode` wired to Claude Code SDK
-- [x] Test suite (378 tests, 95%+ coverage)
+- [x] Test suite (462 tests, 95%+ coverage)
 - [x] GitHub environment adapter
 - [x] `mandible()` DSL with Host/Environment separation
 - [x] `local()` and `docker()` host implementations
