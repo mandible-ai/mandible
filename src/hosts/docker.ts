@@ -88,6 +88,9 @@ export class DockerHost implements Host<DockerHostMetadata> {
       this.projectId = project.id;
     }
 
+    // Serialize environment config so the colony runner can reconstruct it inside the zone
+    const envConfig = this.serializeEnvironment(colonies[0]?.environment);
+
     // Map colony definitions to deploy configs
     const image = this.config.image ?? 'mandible-colony:latest';
     const deployConfigs: DeployColonyConfig[] = colonies.map(def => ({
@@ -106,6 +109,7 @@ export class DockerHost implements Host<DockerHostMetadata> {
       concurrency: def.concurrency,
       config: def.config as Record<string, unknown>,
       resources: this.config.resources,
+      environmentConfig: envConfig,
     }));
 
     // Deploy via Cloud API
@@ -189,6 +193,40 @@ export class DockerHost implements Host<DockerHostMetadata> {
       })),
     );
     await startDashboard(source, { port, open });
+  }
+
+  /**
+   * Serialize an Environment instance into a JSON-safe config object
+   * that the colony runner can use to reconstruct the environment inside the zone.
+   */
+  private serializeEnvironment(env?: Environment): Record<string, unknown> | undefined {
+    if (!env) return undefined;
+
+    const config: Record<string, unknown> = {};
+
+    if (env.constructor.name === 'FilesystemEnvironment') {
+      config.type = 'filesystem';
+      config.root = (env as any).root ?? '/tmp/mandible-signals';
+      config.name = env.name;
+    } else if (env.constructor.name === 'GitHubEnvironment') {
+      config.type = 'github';
+      config.owner = (env as any).owner;
+      config.repo = (env as any).repo;
+      config.token = (env as any).token;
+      config.name = env.name;
+      config.pollInterval = (env as any).pollInterval;
+    } else if (env.constructor.name === 'NetworkEnvironment') {
+      config.type = 'network';
+      config.url = (env as any).url;
+      config.apiKey = (env as any).apiKey;
+      config.project = (env as any).project;
+      config.name = env.name;
+    } else {
+      config.type = 'unknown';
+      config.name = env.name;
+    }
+
+    return config;
   }
 }
 
