@@ -22,8 +22,10 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { watch } from 'node:fs';
 import type {
-  Environment, Signal, SignalQuery, Subscription, DecayResult, SignalMeta,
+  Signal, SignalQuery, Subscription, DecayResult, SignalMeta,
+  EnvironmentConfig, SerializableEnvironment,
 } from '../../core/types.js';
+import { registerEnvironment } from '../../core/environment-registry.js';
 import {
   createSignal, matchesQuery, decayConcentration, isExpired, isClaimExpired
 } from '../../core/signal.js';
@@ -36,7 +38,7 @@ export interface FilesystemEnvConfig {
   name?: string;
 }
 
-export class FilesystemEnvironment implements Environment {
+export class FilesystemEnvironment implements SerializableEnvironment {
   readonly name: string;
   private root: string;
   private signalsDir: string;
@@ -323,6 +325,14 @@ export class FilesystemEnvironment implements Environment {
   }
 
   // ----------------------------------------------------------
+  // Serialization
+  // ----------------------------------------------------------
+
+  serialize(): EnvironmentConfig {
+    return { type: 'filesystem', name: this.name, root: this.root };
+  }
+
+  // ----------------------------------------------------------
   // Internal helpers
   // ----------------------------------------------------------
 
@@ -352,3 +362,9 @@ export class FilesystemEnvironment implements Environment {
   }
 
 }
+
+// Self-register for deserialization
+registerEnvironment('filesystem', (c) => new FilesystemEnvironment({
+  root: (c.root as string) ?? '/tmp/mandible-signals',
+  name: c.name,
+}));

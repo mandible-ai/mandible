@@ -2,9 +2,11 @@
 // PURPOSE: Polling with ETag caching, concentration reinforcement, label-based claims
 
 import type {
-  Environment, Signal, SignalQuery, SignalMeta,
+  Signal, SignalQuery, SignalMeta,
   Subscription, DecayResult,
+  EnvironmentConfig, SerializableEnvironment,
 } from '../../core/types.js';
+import { registerEnvironment } from '../../core/environment-registry.js';
 import { matchesQuery, isClaimExpired } from '../../core/signal.js';
 import { validateSignalInput } from '../../core/validation.js';
 import { GitHubClient } from './client.js';
@@ -21,7 +23,7 @@ import {
   computeDependencyBoosts,
 } from './mapper.js';
 
-export class GitHubEnvironment implements Environment {
+export class GitHubEnvironment implements SerializableEnvironment {
   readonly name: string;
   private readonly config: GitHubEnvConfig;
   private readonly client: GitHubClient;
@@ -548,4 +550,24 @@ export class GitHubEnvironment implements Environment {
     await this.ensureInit();
     return Array.from(this.signals.values());
   }
+
+  serialize(): EnvironmentConfig {
+    return {
+      type: 'github',
+      name: this.name,
+      owner: this.config.owner,
+      repo: this.config.repo,
+      token: this.config.token,
+      pollInterval: this.config.pollInterval,
+    };
+  }
 }
+
+// Self-register for deserialization
+registerEnvironment('github', (c) => new GitHubEnvironment({
+  owner: c.owner as string,
+  repo: c.repo as string,
+  token: (c.token as string) ?? process.env.GITHUB_TOKEN,
+  name: c.name,
+  pollInterval: c.pollInterval as number | undefined,
+}));

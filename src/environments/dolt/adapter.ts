@@ -39,9 +39,11 @@
 // ============================================================
 
 import type {
-  Environment, Signal, SignalQuery, SignalMeta,
+  Signal, SignalQuery, SignalMeta,
   Subscription, DecayResult,
+  EnvironmentConfig, SerializableEnvironment,
 } from '../../core/types.js';
+import { registerEnvironment } from '../../core/environment-registry.js';
 
 export interface DoltEnvConfig {
   /** Dolt database connection string */
@@ -54,7 +56,7 @@ export interface DoltEnvConfig {
   name?: string;
 }
 
-export class DoltEnvironment implements Environment {
+export class DoltEnvironment implements SerializableEnvironment {
   readonly name: string;
   private config: DoltEnvConfig;
 
@@ -126,6 +128,16 @@ export class DoltEnvironment implements Environment {
     throw new Error('DoltEnvironment: not yet implemented.');
   }
 
+  serialize(): EnvironmentConfig {
+    return {
+      type: 'dolt',
+      name: this.name,
+      connectionString: this.config.connectionString,
+      database: this.config.database,
+      branch: this.config.branch,
+    };
+  }
+
   // ----------------------------------------------------------
   // Dolt-specific operations (not part of the base interface)
   // ----------------------------------------------------------
@@ -157,3 +169,11 @@ export class DoltEnvironment implements Environment {
     throw new Error('DoltEnvironment: not yet implemented.');
   }
 }
+
+// Self-register for deserialization
+registerEnvironment('dolt', (c) => new DoltEnvironment({
+  connectionString: c.connectionString as string,
+  database: c.database as string,
+  branch: c.branch as string | undefined,
+  name: c.name,
+}));
