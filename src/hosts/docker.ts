@@ -17,6 +17,7 @@ import type {
   Environment,
   HostResources,
 } from '../core/types.js';
+import { isSerializableEnvironment } from '../core/environment-registry.js';
 import type { DeployColonyConfig } from '../cloud/types.js';
 
 export interface DockerHostConfig {
@@ -201,32 +202,8 @@ export class DockerHost implements Host<DockerHostMetadata> {
    */
   private serializeEnvironment(env?: Environment): Record<string, unknown> | undefined {
     if (!env) return undefined;
-
-    const config: Record<string, unknown> = {};
-
-    if (env.constructor.name === 'FilesystemEnvironment') {
-      config.type = 'filesystem';
-      config.root = (env as any).root ?? '/tmp/mandible-signals';
-      config.name = env.name;
-    } else if (env.constructor.name === 'GitHubEnvironment') {
-      config.type = 'github';
-      config.owner = (env as any).owner;
-      config.repo = (env as any).repo;
-      config.token = (env as any).token;
-      config.name = env.name;
-      config.pollInterval = (env as any).pollInterval;
-    } else if (env.constructor.name === 'NetworkEnvironment') {
-      config.type = 'network';
-      config.url = (env as any).url;
-      config.apiKey = (env as any).apiKey;
-      config.project = (env as any).project;
-      config.name = env.name;
-    } else {
-      config.type = 'unknown';
-      config.name = env.name;
-    }
-
-    return config;
+    if (isSerializableEnvironment(env)) return env.serialize();
+    return { type: 'unknown', name: env.name };
   }
 }
 

@@ -176,6 +176,21 @@ export interface Environment {
   snapshot(): Promise<Signal[]>;
 }
 
+// ----------------------------------------------------------
+// Serializable Environment — opt-in protocol for environment
+// serialization/deserialization (registry pattern)
+// ----------------------------------------------------------
+
+export interface EnvironmentConfig {
+  type: string;
+  name?: string;
+  [key: string]: unknown;
+}
+
+export interface SerializableEnvironment extends Environment {
+  serialize(): EnvironmentConfig;
+}
+
 export interface Subscription {
   unsubscribe(): void;
 }

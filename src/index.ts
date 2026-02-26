@@ -8,6 +8,8 @@ export type {
   SignalMeta,
   SignalQuery,
   Environment,
+  EnvironmentConfig,
+  SerializableEnvironment,
   Subscription,
   DecayResult,
   ColonyDefinition,
@@ -43,6 +45,13 @@ export {
   isClaimExpired,
   prioritize,
 } from './core/signal.js';
+
+// Environment registry
+export {
+  registerEnvironment,
+  deserializeEnvironment,
+  isSerializableEnvironment,
+} from './core/environment-registry.js';
 
 // Colony DSL
 export { colony } from './dsl/builder.js';
