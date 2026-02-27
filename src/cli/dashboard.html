@@ -57,6 +57,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
 .colony-card .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 8px; font-size: 12px; }
 .colony-card .stat { color: var(--text-dim); }
 .colony-card .stat b { color: var(--text); font-weight: 500; }
+.colony-card svg { display: block; }
 .colony-card .bar { margin-top: 8px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
 .colony-card .bar .fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
 
@@ -205,6 +206,35 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
   const MAX_EVENTS = 1000;
   let eventFilter = '';
 
+  // Sparkline: per-colony rolling 30-minute processed-per-minute
+  const SPARKLINE_MINUTES = 30;
+  const sparklineData = {};  // colony name → number[30]
+  let sparklineMinuteTs = Math.floor(Date.now() / 60000);
+
+  function recordSparklineEvent(colony, timestamp) {
+    const minuteTs = Math.floor(timestamp / 60000);
+    if (!sparklineData[colony]) {
+      sparklineData[colony] = new Array(SPARKLINE_MINUTES).fill(0);
+    }
+    advanceSparkline(minuteTs);
+    sparklineData[colony][SPARKLINE_MINUTES - 1]++;
+  }
+
+  function advanceSparkline(nowMinuteTs) {
+    const elapsed = nowMinuteTs - sparklineMinuteTs;
+    if (elapsed <= 0) return;
+    sparklineMinuteTs = nowMinuteTs;
+    for (const data of Object.values(sparklineData)) {
+      const shift = Math.min(elapsed, SPARKLINE_MINUTES);
+      if (shift >= SPARKLINE_MINUTES) {
+        data.fill(0);
+      } else {
+        data.splice(0, shift);
+        while (data.length < SPARKLINE_MINUTES) data.push(0);
+      }
+    }
+  }
+
   // Colony colors — deterministic from name
   const COLONY_COLORS = {};
   const PALETTE = ['#f0a030','#5090e0','#40c060','#e05050','#b060e0','#e07050','#50c0c0','#c0c040'];
@@ -280,6 +310,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
   function addEvent(ev) {
     state.events.push(ev);
     if (state.events.length > MAX_EVENTS) state.events.shift();
+    if (ev.type === 'action:completed') {
+      recordSparklineEvent(ev.colony, ev.timestamp);
+    }
   }
 
   function updateConnectionUI() {
@@ -384,6 +417,22 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
     return type.replace('colony:', '').replace('signal:', '').replace('action:', '').replace('decay:', '').replace('claim:', '').replace('environment:', '');
   }
 
+  // ── Sparkline SVG ─────────────────────────────────────
+  function renderSparkline(colony, color) {
+    const data = sparklineData[colony] || new Array(SPARKLINE_MINUTES).fill(0);
+    const max = Math.max(1, ...data);
+    const w = 280, h = 32;
+    const points = data.map((v, i) => {
+      const x = (i / (SPARKLINE_MINUTES - 1)) * w;
+      const y = h - (v / max) * (h - 4) - 2;
+      return `${x},${y}`;
+    }).join(' ');
+    return `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="margin-top:8px">
+      <polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" opacity="0.8"/>
+      <polyline points="${points}" fill="none" stroke="${color}" stroke-width="4" stroke-linejoin="round" stroke-linecap="round" opacity="0.15"/>
+    </svg>`;
+  }
+
   // ── Colony Cards ───────────────────────────────────────
   function renderColonies(colonies) {
     const el = document.getElementById('colony-cards');
@@ -409,6 +458,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
           <div class="stat">errors <b>${c.stats?.errors ?? 0}</b></div>
           <div class="stat">avg <b>${Math.round(c.stats?.avgProcessingMs ?? 0)}ms</b></div>
         </div>
+        ${renderSparkline(c.name, color)}
         <div class="bar"><div class="fill" style="width:${concPct}%;background:${color}"></div></div>
       `;
       el.appendChild(card);
@@ -791,6 +841,15 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); font
   pollState();
   setInterval(pollColonies, 3000);
   setInterval(pollState, 5000);
+
+  // Advance sparkline window every 10s, re-render cards when minute rolls
+  setInterval(() => {
+    const now = Math.floor(Date.now() / 60000);
+    if (now > sparklineMinuteTs) {
+      advanceSparkline(now);
+      if (state.colonies.length) renderColonies(state.colonies);
+    }
+  }, 10000);
 
   // Handle resize for graph
   window.addEventListener('resize', () => {
