@@ -628,3 +628,122 @@ describe('runtime — legacy on() events', () => {
     expect(processedSignal!.type).toBe('task:ready');
   });
 });
+
+// ── Autoscale ───────────────────────────────────────────────
+
+describe('runtime — autoscale', () => {
+  it('static concurrency(3) still works, no scaler created', async () => {
+    const events: RuntimeEventData[] = [];
+    const def = buildColony(async () => {}, { concurrency: 3 });
+    const rt = createRuntime(def, { onEvent: (e) => events.push(e) });
+
+    expect(rt.concurrency).toBe(3);
+
+    await rt.start();
+    await sleep(200);
+    await rt.stop();
+
+    // No colony:scaled events
+    expect(events.filter(e => e.type === 'colony:scaled')).toHaveLength(0);
+  });
+
+  it('autoscale increases concurrency under load', async () => {
+    // Deposit many signals to create pressure
+    for (let i = 0; i < 8; i++) {
+      await depositTask(`load-${i}`);
+    }
+
+    const events: RuntimeEventData[] = [];
+    const def = colony('scaler-test')
+      .in(env)
+      .sense('task:ready', { unclaimed: true })
+      .do('process', async () => { await sleep(2000); }) // long action keeps agents busy
+      .concurrency({ min: 1, max: 4, target: 1 })
+      .autoscale({ scaleUpThreshold: 3, cooldownMs: 200 })
+      .claim('exclusive')
+      .poll(100)
+      .build();
+
+    const rt = createRuntime(def, { onEvent: (e) => events.push(e) });
+    await rt.start();
+    // Wait for scaler to evaluate and scale up
+    await sleep(800);
+    await rt.stop();
+
+    // Should have scaled up at least once
+    const scaleEvents = events.filter(e => e.type === 'colony:scaled');
+    expect(scaleEvents.length).toBeGreaterThan(0);
+    expect(rt.concurrency).toBeGreaterThan(1);
+  });
+
+  it('autoscale decreases concurrency when idle', async () => {
+    const events: RuntimeEventData[] = [];
+    const def = colony('idle-scaler')
+      .in(env)
+      .sense('task:ready', { unclaimed: true })
+      .do('process', async () => {})
+      .concurrency({ min: 1, max: 8, target: 3 })
+      .autoscale({ scaleDownAfterMs: 200, cooldownMs: 100 })
+      .claim('exclusive')
+      .poll(100)
+      .build();
+
+    const rt = createRuntime(def, { onEvent: (e) => events.push(e) });
+    // No signals deposited — environment is empty
+    await rt.start();
+    // Wait long enough for idle detection + scale down
+    await sleep(600);
+    await rt.stop();
+
+    const scaleEvents = events.filter(e => e.type === 'colony:scaled');
+    expect(scaleEvents.length).toBeGreaterThan(0);
+    expect(rt.concurrency).toBeLessThan(3);
+  });
+
+  it('colony:scaled events carry correct metadata', async () => {
+    for (let i = 0; i < 6; i++) {
+      await depositTask(`meta-${i}`);
+    }
+
+    const events: RuntimeEventData[] = [];
+    const def = colony('meta-scaler')
+      .in(env)
+      .sense('task:ready', { unclaimed: true })
+      .do('process', async () => { await sleep(200); })
+      .concurrency({ min: 1, max: 4, target: 1 })
+      .autoscale({ scaleUpThreshold: 3, cooldownMs: 200 })
+      .claim('exclusive')
+      .poll(100)
+      .timeout(500)
+      .build();
+
+    const rt = createRuntime(def, { onEvent: (e) => events.push(e) });
+    await rt.start();
+    await sleep(400);
+    await rt.stop();
+
+    const scaleEvent = events.find(e => e.type === 'colony:scaled');
+    expect(scaleEvent).toBeDefined();
+    expect(scaleEvent!.colony).toBe('meta-scaler');
+    expect(scaleEvent!.metadata).toHaveProperty('from');
+    expect(scaleEvent!.metadata).toHaveProperty('to');
+    expect(scaleEvent!.metadata).toHaveProperty('reason');
+    expect(scaleEvent!.metadata).toHaveProperty('queueDepth');
+  });
+
+  it('no colony:scaled events with static concurrency', async () => {
+    for (let i = 0; i < 5; i++) {
+      await depositTask(`static-${i}`);
+    }
+
+    const events: RuntimeEventData[] = [];
+    const def = buildColony(async () => { await sleep(50); }, { concurrency: 2 });
+    const rt = createRuntime(def, { onEvent: (e) => events.push(e) });
+
+    await rt.start();
+    await sleep(500);
+    await rt.stop();
+
+    expect(events.filter(e => e.type === 'colony:scaled')).toHaveLength(0);
+  });
+});

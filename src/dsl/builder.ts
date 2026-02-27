@@ -30,6 +30,8 @@ import type {
   ActionContext,
   ClaimStrategy,
   ColonyConfig,
+  ConcurrencyConfig,
+  AutoScalePolicy,
 } from '../core/types.js';
 
 export class ColonyBuilder<T = Record<string, unknown>> {
@@ -37,7 +39,7 @@ export class ColonyBuilder<T = Record<string, unknown>> {
   private _env?: Environment;
   private _sensors: SensorConfig[] = [];
   private _rules: Rule<T>[] = [];
-  private _concurrency = 1;
+  private _concurrency: ConcurrencyConfig = 1;
   private _claimStrategy: ClaimStrategy = 'exclusive';
   private _claimLease?: number;
   private _config: ColonyConfig = {};
@@ -89,9 +91,15 @@ export class ColonyBuilder<T = Record<string, unknown>> {
     return this;
   }
 
-  /** Set max concurrent agent tasks */
-  concurrency(n: number): this {
+  /** Set max concurrent agent tasks (static number or dynamic range) */
+  concurrency(n: ConcurrencyConfig): this {
     this._concurrency = n;
+    return this;
+  }
+
+  /** Enable autoscaling with optional policy overrides */
+  autoscale(policy: AutoScalePolicy = {}): this {
+    this._config.autoscale = policy;
     return this;
   }
 

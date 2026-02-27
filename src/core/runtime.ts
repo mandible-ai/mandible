@@ -25,10 +25,12 @@ import type {
   Subscription,
   DecayPolicy,
   HeartbeatConfig,
+  ConcurrencyConfig,
 } from './types.js';
 import { prioritize } from './signal.js';
 import { DEFAULT_DECAY_POLICY } from './types.js';
 import { EventBus, type RuntimeEventData, type RuntimeEventCallback } from './events.js';
+import { ColonyScaler } from './scaler.js';
 
 type EventHandler = (...args: any[]) => void;
 
@@ -46,9 +48,11 @@ export class ColonyRuntime implements IColonyRuntime {
     avgProcessingMs: 0,
   };
 
+  private _effectiveConcurrency: number;
   private pollTimers: ReturnType<typeof setInterval>[] = [];
   private watchSubscriptions: Subscription[] = [];
   private decayTimer?: ReturnType<typeof setInterval>;
+  private scaler?: ColonyScaler;
   private eventHandlers = new Map<RuntimeEvent, Set<EventHandler>>();
   private processingSignals = new Set<string>(); // prevent double-processing
   private decayPolicy: DecayPolicy;
@@ -66,6 +70,7 @@ export class ColonyRuntime implements IColonyRuntime {
     }
   ) {
     this.definition = definition;
+    this._effectiveConcurrency = resolveConcurrency(definition.concurrency);
     const decayPolicy = options?.decayPolicy;
     this.decayPolicy = { ...DEFAULT_DECAY_POLICY, ...decayPolicy };
     this.events = options?.eventBus ?? new EventBus();
@@ -74,7 +79,7 @@ export class ColonyRuntime implements IColonyRuntime {
 
   get state(): RuntimeState { return this._state; }
   get activeCount(): number { return this._activeCount; }
-  get concurrency(): number { return this.definition.concurrency; }
+  get concurrency(): number { return this._effectiveConcurrency; }
   get stats(): RuntimeStats { return { ...this._stats }; }
   get name(): string { return this.definition.name; }
 
@@ -87,7 +92,7 @@ export class ColonyRuntime implements IColonyRuntime {
     this._state = 'running';
     this.emitEvent({ type: 'colony:started', colony: this.definition.name, timestamp: Date.now() });
     this.emit('colony:started', this.definition.name);
-    this.log('info', `Colony "${this.definition.name}" started (concurrency: ${this.definition.concurrency})`);
+    this.log('info', `Colony "${this.definition.name}" started (concurrency: ${this._effectiveConcurrency})`);
 
     // Start sensors
     for (const sensor of this.definition.sensors) {
@@ -103,12 +108,36 @@ export class ColonyRuntime implements IColonyRuntime {
       () => this.runDecay(),
       this.decayPolicy.interval,
     );
+
+    // Start scaler if concurrency is a range with autoscale policy
+    if (typeof this.definition.concurrency === 'object' && this.definition.config?.autoscale) {
+      const range = this.definition.concurrency;
+      this.scaler = new ColonyScaler({
+        min: range.min,
+        max: range.max,
+        target: this._effectiveConcurrency,
+        policy: this.definition.config.autoscale,
+        environment: this.definition.environment,
+        sensors: this.definition.sensors,
+        getActiveCount: () => this._activeCount,
+        onScale: (n) => { this._effectiveConcurrency = n; },
+        onEvent: (e) => this.emitEvent(e),
+        colonyName: this.definition.name,
+      });
+      await this.scaler.start();
+    }
   }
 
   async stop(): Promise<void> {
     if (this._state !== 'running') return;
     this._state = 'stopping';
     this.log('info', `Colony "${this.definition.name}" stopping...`);
+
+    // Stop scaler
+    if (this.scaler) {
+      this.scaler.stop();
+      this.scaler = undefined;
+    }
 
     // Stop all sensors
     for (const timer of this.pollTimers) clearInterval(timer);
@@ -172,7 +201,7 @@ export class ColonyRuntime implements IColonyRuntime {
 
     const poll = async () => {
       if (this._state !== 'running') return;
-      if (this._activeCount >= this.definition.concurrency) return; // at capacity
+      if (this._activeCount >= this._effectiveConcurrency) return; // at capacity
 
       try {
         const signals = await this.definition.environment.observe({
@@ -187,7 +216,7 @@ export class ColonyRuntime implements IColonyRuntime {
 
         for (const signal of prioritized) {
           if (this._state !== 'running') break;
-          if (this._activeCount >= this.definition.concurrency) break;
+          if (this._activeCount >= this._effectiveConcurrency) break;
           if (this.processingSignals.has(signal.id)) continue;
 
           this.processSignal(signal);
@@ -217,7 +246,7 @@ export class ColonyRuntime implements IColonyRuntime {
       },
       (signal) => {
         if (this._state !== 'running') return;
-        if (this._activeCount >= this.definition.concurrency) return;
+        if (this._activeCount >= this._effectiveConcurrency) return;
         if (this.processingSignals.has(signal.id)) return;
 
         this._stats.signalsSensed++;
@@ -618,6 +647,12 @@ export class ColonyRuntime implements IColonyRuntime {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Resolve a ConcurrencyConfig to an initial concurrency number. */
+function resolveConcurrency(config: ConcurrencyConfig): number {
+  if (typeof config === 'number') return config;
+  return config.target ?? config.min;
 }
 
 // ----------------------------------------------------------
