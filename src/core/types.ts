@@ -292,8 +292,8 @@ export interface ColonyDefinition<T = Record<string, unknown>> {
   /** The rules that map stimuli to responses */
   rules: Rule<T>[];
 
-  /** How many concurrent agents can run */
-  concurrency: number;
+  /** How many concurrent agents can run (static number or dynamic range) */
+  concurrency: ConcurrencyConfig;
 
   /** How to handle contention for the same signal */
   claimStrategy: ClaimStrategy;
@@ -381,6 +381,9 @@ export interface ColonyConfig {
 
   /** Heartbeat configuration — deposits periodic signals during long-running actions */
   heartbeat?: HeartbeatConfig;
+
+  /** Autoscale policy — enables dynamic concurrency when concurrency is a range */
+  autoscale?: AutoScalePolicy;
 }
 
 export interface HeartbeatConfig {
@@ -392,6 +395,34 @@ export interface HeartbeatConfig {
 
   /** Signal type for heartbeat. Defaults to 'heartbeat:{colonyName}' */
   type?: string;
+}
+
+// ----------------------------------------------------------
+// Concurrency Scaling — dynamic agent concurrency
+// ----------------------------------------------------------
+
+/**
+ * Static concurrency (number) or dynamic range for autoscaling.
+ * A plain number means fixed concurrency (no scaler created).
+ * An object specifies min/max bounds for the scaler.
+ */
+export type ConcurrencyConfig = number | {
+  min: number;
+  max: number;
+  /** Initial concurrency. Defaults to min. */
+  target?: number;
+};
+
+/**
+ * Policy that governs how the ColonyScaler adjusts concurrency.
+ */
+export interface AutoScalePolicy {
+  /** Unclaimed signal count that triggers scale-up (default: 5) */
+  scaleUpThreshold?: number;
+  /** Idle time in ms before scaling down (default: 30_000) */
+  scaleDownAfterMs?: number;
+  /** Minimum ms between scaling decisions (default: 10_000) */
+  cooldownMs?: number;
 }
 
 // ----------------------------------------------------------

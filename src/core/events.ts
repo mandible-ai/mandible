@@ -19,7 +19,8 @@ export type RuntimeEventType =
   | 'signal:withdrawn'
   | 'decay:sweep'
   | 'claim:released'
-  | 'environment:snapshot';
+  | 'environment:snapshot'
+  | 'colony:scaled';
 
 export interface RuntimeEventData {
   type: RuntimeEventType;
