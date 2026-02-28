@@ -551,6 +551,12 @@ export class ColonyRuntime implements IColonyRuntime {
 
     const deposit = async (payload?: Record<string, unknown>) => {
       try {
+        // Withdraw previous heartbeat first (swap pattern: always 0 or 1 active)
+        if (lastHeartbeatId) {
+          try { await env.withdraw(lastHeartbeatId); } catch { /* best effort */ }
+          lastHeartbeatId = undefined;
+        }
+
         const newSignal = await env.deposit({
           type: signalType,
           payload: {
@@ -569,10 +575,6 @@ export class ColonyRuntime implements IColonyRuntime {
           },
         });
 
-        // Withdraw previous heartbeat (swap pattern: always 0 or 1 active)
-        if (lastHeartbeatId) {
-          try { await env.withdraw(lastHeartbeatId); } catch { /* best effort */ }
-        }
         lastHeartbeatId = newSignal.id;
       } catch {
         // Never crash the action due to heartbeat failure
