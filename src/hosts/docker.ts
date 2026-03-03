@@ -109,7 +109,7 @@ export class DockerHost implements Host<DockerHostMetadata> {
       claimStrategy: def.claimStrategy,
       concurrency: typeof def.concurrency === 'number' ? def.concurrency : (def.concurrency.target ?? def.concurrency.min),
       config: def.config as Record<string, unknown>,
-      resources: this.config.resources,
+      resources: def.resources ?? this.config.resources,
       environmentConfig: envConfig,
     }));
 

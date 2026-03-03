@@ -137,6 +137,66 @@ describe('mandible DSL', () => {
     expect(defs[1].claimStrategy).toBe('exclusive');
   });
 
+  describe('.resources()', () => {
+    it('stores per-colony resource allocation in the built definition', async () => {
+      const root = freshRoot();
+      await mkdir(root, { recursive: true });
+      const env = new FilesystemEnvironment({ root, name: 'res-test' });
+
+      const defs = await mandible('resources-test')
+        .environment(env)
+        .colony('heavy', c => c
+          .sense('task:gpu')
+          .do('process', async () => {})
+          .resources({ targetCpus: 4, targetMemoryMb: 4096 })
+        )
+        .build();
+
+      expect(defs).toHaveLength(1);
+      expect(defs[0].resources).toEqual({ targetCpus: 4, targetMemoryMb: 4096 });
+    });
+
+    it('resources are optional — undefined when omitted', async () => {
+      const root = freshRoot();
+      await mkdir(root, { recursive: true });
+      const env = new FilesystemEnvironment({ root, name: 'no-res' });
+
+      const defs = await mandible('no-resources')
+        .environment(env)
+        .colony('light', c => c
+          .sense('task:quick')
+          .do('run', async () => {})
+        )
+        .build();
+
+      expect(defs[0].resources).toBeUndefined();
+    });
+
+    it('different colonies can have different resources', async () => {
+      const root = freshRoot();
+      await mkdir(root, { recursive: true });
+      const env = new FilesystemEnvironment({ root, name: 'multi-res' });
+
+      const defs = await mandible('multi-resources')
+        .environment(env)
+        .colony('gpu-worker', c => c
+          .sense('task:gpu')
+          .do('process', async () => {})
+          .resources({ targetCpus: 4, targetMemoryMb: 4096 })
+        )
+        .colony('monitor', c => c
+          .sense('status:*')
+          .do('check', async () => {})
+          .resources({ targetCpus: 1, targetMemoryMb: 256 })
+        )
+        .build();
+
+      expect(defs).toHaveLength(2);
+      expect(defs[0].resources).toEqual({ targetCpus: 4, targetMemoryMb: 4096 });
+      expect(defs[1].resources).toEqual({ targetCpus: 1, targetMemoryMb: 256 });
+    });
+  });
+
   describe('module refs', () => {
     it('accepts a ColonyModuleRef and resolves it via dynamic import', async () => {
       const root = freshRoot();

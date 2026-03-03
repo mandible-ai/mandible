@@ -300,6 +300,9 @@ export interface ColonyDefinition<T = Record<string, unknown>> {
 
   /** Colony-level configuration */
   config?: ColonyConfig;
+
+  /** Per-colony resource allocation (overrides host default) */
+  resources?: HostResources;
 }
 
 export interface SensorConfig {
