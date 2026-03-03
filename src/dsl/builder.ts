@@ -32,6 +32,7 @@ import type {
   ColonyConfig,
   ConcurrencyConfig,
   AutoScalePolicy,
+  HostResources,
 } from '../core/types.js';
 
 export class ColonyBuilder<T = Record<string, unknown>> {
@@ -43,6 +44,7 @@ export class ColonyBuilder<T = Record<string, unknown>> {
   private _claimStrategy: ClaimStrategy = 'exclusive';
   private _claimLease?: number;
   private _config: ColonyConfig = {};
+  private _resources?: HostResources;
   private _pendingGuard?: (signal: Signal<T>) => boolean | Promise<boolean>;
 
   constructor(name: string) {
@@ -94,6 +96,12 @@ export class ColonyBuilder<T = Record<string, unknown>> {
   /** Set max concurrent agent tasks (static number or dynamic range) */
   concurrency(n: ConcurrencyConfig): this {
     this._concurrency = n;
+    return this;
+  }
+
+  /** Set per-colony resource allocation (overrides host default) */
+  resources(res: HostResources): this {
+    this._resources = res;
     return this;
   }
 
@@ -174,6 +182,7 @@ export class ColonyBuilder<T = Record<string, unknown>> {
       concurrency: this._concurrency,
       claimStrategy: this._claimStrategy,
       config: this._config,
+      resources: this._resources,
     };
   }
 }
