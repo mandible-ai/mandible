@@ -117,7 +117,7 @@ export type { DebugBridge, DebugBridgeConfig } from './patterns/debug-bridge.js'
 
 // Dashboard
 export { startDashboard, LocalDashboardSource, resolveEnvironments } from './cli/server.js';
-export type { DashboardSource, ColonyInfo, DashboardOptions as DashboardServerOptions, SimpleConfig } from './cli/server.js';
+export type { DashboardSource, DashboardHandle, ColonyInfo, DashboardOptions as DashboardServerOptions, SimpleConfig } from './cli/server.js';
 
 // Action providers
 export { withClaudeCode } from './providers/claude-code.js';

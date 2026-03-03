@@ -1,7 +1,7 @@
 // PURPOSE: Dashboard Server — HTTP + WebSocket for real-time local observability
 // PURPOSE: Data flows through DashboardSource interface — no cloud relay, no runtime coupling
 
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -137,10 +137,15 @@ export interface DashboardOptions {
   open: boolean;
 }
 
+export interface DashboardHandle {
+  server: Server;
+  close: () => void;
+}
+
 export async function startDashboard(
   source: DashboardSource,
   options: DashboardOptions,
-): Promise<void> {
+): Promise<DashboardHandle> {
   const recentEvents: RuntimeEventData[] = [...source.bufferedEvents];
   const MAX_RECENT = 500;
 
@@ -230,14 +235,21 @@ export async function startDashboard(
     } catch { /* ignore snapshot errors */ }
   }, 2000);
 
-  // Start HTTP server
-  server.listen(options.port, () => {
-    console.log(`  dashboard: http://localhost:${options.port}`);
+  // Start HTTP server — wait for it to be listening
+  await new Promise<void>((resolve) => {
+    server.listen(options.port, () => {
+      const addr = server.address();
+      const actualPort = typeof addr === 'object' && addr ? addr.port : options.port;
+      console.log(`  dashboard: http://localhost:${actualPort}`);
+      resolve();
+    });
   });
 
   // Auto-open browser
   if (options.open) {
-    const dashUrl = `http://localhost:${options.port}`;
+    const addr = server.address();
+    const actualPort = typeof addr === 'object' && addr ? addr.port : options.port;
+    const dashUrl = `http://localhost:${actualPort}`;
     try {
       const { exec } = await import('node:child_process');
       const cmd = process.platform === 'darwin' ? 'open' :
@@ -247,18 +259,26 @@ export async function startDashboard(
   }
 
   // Graceful shutdown
-  const shutdown = async () => {
+  const shutdown = () => {
     console.log('\n  shutting down...');
-    clearInterval(snapshotInterval);
-    source.close();
-    wss.close();
-    server.close();
+    close();
     console.log('  done.\n');
     process.exit(0);
   };
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+
+  const close = () => {
+    clearInterval(snapshotInterval);
+    source.close();
+    wss.close();
+    server.close();
+    process.removeListener('SIGINT', shutdown);
+    process.removeListener('SIGTERM', shutdown);
+  };
+
+  return { server, close };
 }
 
 // ── Helpers ──────────────────────────────────────────────────

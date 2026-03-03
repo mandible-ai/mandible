@@ -3,6 +3,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { LocalDashboardSource, startDashboard } from '../../src/cli/server.js';
+import type { DashboardHandle } from '../../src/cli/server.js';
 import { EventBus, type RuntimeEventData } from '../../src/core/events.js';
 import type { Environment, Signal, SignalInput, SignalQuery, Subscription, DecayResult } from '../../src/core/types.js';
 import WebSocket from 'ws';
@@ -51,6 +52,12 @@ function makeEvent(colony: string, type: RuntimeEventData['type'] = 'signal:depo
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
+}
+
+function getPort(handle: DashboardHandle): number {
+  const addr = handle.server.address();
+  if (typeof addr === 'object' && addr) return addr.port;
+  throw new Error('Server not listening');
 }
 
 // ── LocalDashboardSource tests ───────────────────────────────
@@ -152,23 +159,15 @@ describe('LocalDashboardSource', () => {
 
 describe('startDashboard HTTP endpoints', () => {
   let eventBus: EventBus;
-  let port: number;
+  let handle: DashboardHandle;
   let baseUrl: string;
-  // Store original process handlers so we can clean up
-  const originalExit = process.exit;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     eventBus = new EventBus();
-    // Use random port to avoid conflicts
-    port = 14000 + Math.floor(Math.random() * 1000);
-    baseUrl = `http://localhost:${port}`;
-
-    // Prevent process.exit from killing the test runner
-    process.exit = (() => {}) as any;
   });
 
   afterEach(() => {
-    process.exit = originalExit;
+    handle?.close();
   });
 
   async function startServer(envs?: Environment[], colonyInfoFn?: () => any[]) {
@@ -183,11 +182,8 @@ describe('startDashboard HTTP endpoints', () => {
       }]),
     );
 
-    // Start dashboard without opening browser
-    const serverPromise = startDashboard(source, { port, open: false });
-    // Give server time to start
-    await sleep(200);
-    return { source, serverPromise };
+    handle = await startDashboard(source, { port: 0, open: false });
+    baseUrl = `http://localhost:${getPort(handle)}`;
   }
 
   it('GET /api/state returns signal snapshot', async () => {
@@ -289,17 +285,14 @@ describe('startDashboard HTTP endpoints', () => {
 
 describe('startDashboard WebSocket', () => {
   let eventBus: EventBus;
-  let port: number;
-  const originalExit = process.exit;
+  let handle: DashboardHandle;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     eventBus = new EventBus();
-    port = 15000 + Math.floor(Math.random() * 1000);
-    process.exit = (() => {}) as any;
   });
 
   afterEach(() => {
-    process.exit = originalExit;
+    handle?.close();
   });
 
   it('sends init with buffered events on connect', async () => {
@@ -311,8 +304,8 @@ describe('startDashboard WebSocket', () => {
       buffered,
     );
 
-    startDashboard(source, { port, open: false });
-    await sleep(200);
+    handle = await startDashboard(source, { port: 0, open: false });
+    const port = getPort(handle);
 
     const ws = new WebSocket(`ws://localhost:${port}`);
     const initMsg = await new Promise<any>((resolve) => {
@@ -334,8 +327,8 @@ describe('startDashboard WebSocket', () => {
   it('broadcasts events from source to connected clients', async () => {
     const source = new LocalDashboardSource(eventBus, [stubEnv('ws-env')], () => []);
 
-    startDashboard(source, { port, open: false });
-    await sleep(200);
+    handle = await startDashboard(source, { port: 0, open: false });
+    const port = getPort(handle);
 
     const ws = new WebSocket(`ws://localhost:${port}`);
     await new Promise<void>((resolve) => ws.on('open', resolve));
