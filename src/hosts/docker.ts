@@ -107,7 +107,7 @@ export class DockerHost implements Host<DockerHostMetadata> {
         pollInterval: s.pollInterval,
       })),
       claimStrategy: def.claimStrategy,
-      concurrency: def.concurrency,
+      concurrency: typeof def.concurrency === 'number' ? def.concurrency : (def.concurrency.target ?? def.concurrency.min),
       config: def.config as Record<string, unknown>,
       resources: this.config.resources,
       environmentConfig: envConfig,
@@ -189,7 +189,7 @@ export class DockerHost implements Host<DockerHostMetadata> {
         name: c.name,
         state: c.state,
         activeCount: 0,
-        concurrency: this._colonyDefs.find(d => d.name === c.name)?.concurrency ?? 1,
+        concurrency: (() => { const cc = this._colonyDefs.find(d => d.name === c.name)?.concurrency ?? 1; return typeof cc === 'number' ? cc : (cc.target ?? cc.min); })(),
         stats: emptyStats,
       })),
     );

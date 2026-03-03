@@ -19,6 +19,8 @@ export type {
   ClaimStrategy,
   ColonyConfig,
   HeartbeatConfig,
+  ConcurrencyConfig,
+  AutoScalePolicy,
   ColonyRuntime as IColonyRuntime,
   RuntimeState,
   RuntimeStats,
@@ -71,6 +73,7 @@ export type { DockerHostConfig, DockerHostMetadata } from './hosts/docker.js';
 
 // Runtime
 export { ColonyRuntime, createRuntime } from './core/runtime.js';
+export { ColonyScaler } from './core/scaler.js';
 
 // Event system
 export { EventBus } from './core/events.js';
@@ -114,7 +117,7 @@ export type { DebugBridge, DebugBridgeConfig } from './patterns/debug-bridge.js'
 
 // Dashboard
 export { startDashboard, LocalDashboardSource, resolveEnvironments } from './cli/server.js';
-export type { DashboardSource, ColonyInfo, DashboardOptions as DashboardServerOptions, SimpleConfig } from './cli/server.js';
+export type { DashboardSource, DashboardHandle, ColonyInfo, DashboardOptions as DashboardServerOptions, SimpleConfig } from './cli/server.js';
 
 // Action providers
 export { withClaudeCode } from './providers/claude-code.js';
