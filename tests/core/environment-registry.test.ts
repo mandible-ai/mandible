@@ -167,7 +167,7 @@ describe('GitHubEnvironment serialization', () => {
 describe('DoltEnvironment serialization', () => {
   it('serializes with correct type and fields', () => {
     const env = new DoltEnvironment({
-      connectionString: 'mysql://localhost:3306',
+      owner: 'test-owner',
       database: 'signals_db',
       branch: 'feature-x',
       name: 'dolt-test',
@@ -176,15 +176,16 @@ describe('DoltEnvironment serialization', () => {
     expect(config).toEqual({
       type: 'dolt',
       name: 'dolt-test',
-      connectionString: 'mysql://localhost:3306',
+      owner: 'test-owner',
       database: 'signals_db',
       branch: 'feature-x',
+      apiBase: undefined,
     });
   });
 
   it('round-trips via registry', () => {
     const original = new DoltEnvironment({
-      connectionString: 'mysql://localhost:3306',
+      owner: 'test-owner',
       database: 'signals_db',
       name: 'dolt-test',
     });
