@@ -629,6 +629,158 @@ describe('runtime — legacy on() events', () => {
   });
 });
 
+// ── Decay control ───────────────────────────────────────────
+
+describe('runtime — decay control', () => {
+  it('decay runs by default', async () => {
+    const events: RuntimeEventData[] = [];
+    const def = buildColony(async () => {});
+    const rt = createRuntime(def, {
+      onEvent: (e) => events.push(e),
+      decayPolicy: { interval: 100 },
+    });
+
+    await rt.start();
+    await sleep(300);
+    await rt.stop();
+
+    const decayEvents = events.filter(e => e.type === 'decay:sweep');
+    expect(decayEvents.length).toBeGreaterThan(0);
+  });
+
+  it('decay skipped when config.decay === false', async () => {
+    const events: RuntimeEventData[] = [];
+    const def = colony('no-decay')
+      .in(env)
+      .sense('task:ready', { unclaimed: true })
+      .do('process', async () => {})
+      .decay(false)
+      .claim('exclusive')
+      .poll(100)
+      .build();
+
+    const rt = createRuntime(def, {
+      onEvent: (e) => events.push(e),
+      decayPolicy: { interval: 100 },
+    });
+
+    await rt.start();
+    await sleep(300);
+    await rt.stop();
+
+    const decayEvents = events.filter(e => e.type === 'decay:sweep');
+    expect(decayEvents).toHaveLength(0);
+  });
+
+  it('decay runs when config.decay === true explicitly', async () => {
+    const events: RuntimeEventData[] = [];
+    const def = colony('explicit-decay')
+      .in(env)
+      .sense('task:ready', { unclaimed: true })
+      .do('process', async () => {})
+      .decay(true)
+      .claim('exclusive')
+      .poll(100)
+      .build();
+
+    const rt = createRuntime(def, {
+      onEvent: (e) => events.push(e),
+      decayPolicy: { interval: 100 },
+    });
+
+    await rt.start();
+    await sleep(300);
+    await rt.stop();
+
+    const decayEvents = events.filter(e => e.type === 'decay:sweep');
+    expect(decayEvents.length).toBeGreaterThan(0);
+  });
+});
+
+// ── Enrich ──────────────────────────────────────────────────
+
+describe('runtime — enrich', () => {
+  it('ctx.enrich() updates signal in-place and returns updated signal', async () => {
+    let enrichedSignal: Signal | undefined;
+    const def = buildColony(async (signal, ctx) => {
+      enrichedSignal = await ctx.enrich(signal.id, { payload: { enriched: true } });
+    });
+
+    const trigger = await depositTask('enrich-test');
+    const rt = createRuntime(def);
+    await rt.start();
+    await sleep(300);
+    await rt.stop();
+
+    expect(enrichedSignal).toBeDefined();
+    expect(enrichedSignal!.payload).toEqual({ name: 'enrich-test', enriched: true });
+  });
+
+  it('ctx.enrich() throws if environment does not support update()', async () => {
+    let thrownError: Error | undefined;
+
+    // Create a minimal environment without update()
+    const noUpdateEnv = {
+      name: 'no-update',
+      observe: async () => [],
+      deposit: env.deposit.bind(env),
+      withdraw: env.withdraw.bind(env),
+      claim: env.claim.bind(env),
+      release: env.release.bind(env),
+      watch: env.watch.bind(env),
+      history: env.history.bind(env),
+      decay: env.decay.bind(env),
+      snapshot: env.snapshot.bind(env),
+    };
+
+    // Deposit a signal first, then swap the environment reference
+    const trigger = await depositTask('no-update-test');
+
+    // Override observe to return the signal
+    noUpdateEnv.observe = async () => [trigger];
+
+    const def = colony('no-update-colony')
+      .in(noUpdateEnv as any)
+      .sense('task:ready', { unclaimed: true })
+      .do('process', async (_signal, ctx) => {
+        try {
+          await ctx.enrich(_signal.id, { payload: { x: 1 } });
+        } catch (e) {
+          thrownError = e as Error;
+        }
+      })
+      .claim('none')
+      .poll(100)
+      .build();
+
+    const rt = createRuntime(def);
+    await rt.start();
+    await sleep(300);
+    await rt.stop();
+
+    expect(thrownError).toBeDefined();
+    expect(thrownError!.message).toContain('does not support update()');
+  });
+
+  it('signal:enriched event emitted', async () => {
+    const events: RuntimeEventData[] = [];
+    const def = buildColony(async (signal, ctx) => {
+      await ctx.enrich(signal.id, { tags: ['enriched'] });
+    });
+
+    await depositTask('enrich-event-test');
+    const rt = createRuntime(def, { onEvent: (e) => events.push(e) });
+    await rt.start();
+    await sleep(300);
+    await rt.stop();
+
+    const enriched = events.filter(e => e.type === 'signal:enriched');
+    expect(enriched.length).toBeGreaterThan(0);
+    expect(enriched[0].signalId).toMatch(/^sig_/);
+    expect(enriched[0].colony).toBe('test-colony');
+  });
+});
+
 // ── Autoscale ───────────────────────────────────────────────
 
 describe('runtime — autoscale', () => {

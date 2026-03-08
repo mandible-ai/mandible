@@ -137,6 +137,59 @@ describe('mandible DSL', () => {
     expect(defs[1].claimStrategy).toBe('exclusive');
   });
 
+  describe('.decay()', () => {
+    it('.decay(false) sets config.decay to false in built definition', async () => {
+      const root = freshRoot();
+      await mkdir(root, { recursive: true });
+      const env = new FilesystemEnvironment({ root, name: 'decay-test' });
+
+      const defs = await mandible('decay-test')
+        .environment(env)
+        .colony('persistent', c => c
+          .sense('artifact:*')
+          .do('process', async () => {})
+          .decay(false)
+        )
+        .build();
+
+      expect(defs).toHaveLength(1);
+      expect(defs[0].config?.decay).toBe(false);
+    });
+
+    it('.decay(true) sets config.decay to true', async () => {
+      const root = freshRoot();
+      await mkdir(root, { recursive: true });
+      const env = new FilesystemEnvironment({ root, name: 'decay-on' });
+
+      const defs = await mandible('decay-on')
+        .environment(env)
+        .colony('ephemeral', c => c
+          .sense('task:*')
+          .do('process', async () => {})
+          .decay(true)
+        )
+        .build();
+
+      expect(defs[0].config?.decay).toBe(true);
+    });
+
+    it('config.decay is undefined when .decay() not called', async () => {
+      const root = freshRoot();
+      await mkdir(root, { recursive: true });
+      const env = new FilesystemEnvironment({ root, name: 'no-decay-call' });
+
+      const defs = await mandible('no-decay-call')
+        .environment(env)
+        .colony('default', c => c
+          .sense('task:*')
+          .do('process', async () => {})
+        )
+        .build();
+
+      expect(defs[0].config?.decay).toBeUndefined();
+    });
+  });
+
   describe('.resources()', () => {
     it('stores per-colony resource allocation in the built definition', async () => {
       const root = freshRoot();

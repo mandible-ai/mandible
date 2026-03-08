@@ -357,6 +357,34 @@ export class GitHubEnvironment implements SerializableEnvironment {
     }
   }
 
+  async update(
+    signalId: string,
+    changes: {
+      payload?: Record<string, unknown>;
+      meta?: Partial<Pick<SignalMeta, 'tags' | 'concentration'>>;
+    }
+  ): Promise<Signal> {
+    await this.ensureInit();
+
+    const signal = this.signals.get(signalId);
+    if (!signal) {
+      throw new Error(`Signal ${signalId} not found`);
+    }
+
+    if (changes.payload) {
+      signal.payload = { ...signal.payload, ...changes.payload };
+    }
+    if (changes.meta?.tags !== undefined) {
+      signal.meta.tags = changes.meta.tags;
+    }
+    if (changes.meta?.concentration !== undefined) {
+      signal.meta.concentration = changes.meta.concentration;
+    }
+
+    this.signals.set(signalId, signal);
+    return signal;
+  }
+
   async claim(
     signalId: string,
     claimant: string,

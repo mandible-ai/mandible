@@ -119,6 +119,39 @@ export class FilesystemEnvironment implements SerializableEnvironment {
     }
   }
 
+  async update(
+    signalId: string,
+    changes: {
+      payload?: Record<string, unknown>;
+      meta?: Partial<Pick<SignalMeta, 'tags' | 'concentration'>>;
+    }
+  ): Promise<Signal> {
+    await this.ensureInit();
+    const filePath = join(this.signalsDir, `${signalId}.json`);
+
+    let raw: string;
+    try {
+      raw = await readFile(filePath, 'utf-8');
+    } catch {
+      throw new Error(`Signal ${signalId} not found`);
+    }
+
+    const signal: Signal = JSON.parse(raw);
+
+    if (changes.payload) {
+      signal.payload = { ...signal.payload, ...changes.payload };
+    }
+    if (changes.meta?.tags !== undefined) {
+      signal.meta.tags = changes.meta.tags;
+    }
+    if (changes.meta?.concentration !== undefined) {
+      signal.meta.concentration = changes.meta.concentration;
+    }
+
+    await writeFile(filePath, JSON.stringify(signal, null, 2), 'utf-8');
+    return signal;
+  }
+
   async claim(
     signalId: string,
     claimant: string,

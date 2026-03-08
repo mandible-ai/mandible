@@ -17,6 +17,7 @@ export type RuntimeEventType =
   | 'action:failed'
   | 'signal:deposited'
   | 'signal:withdrawn'
+  | 'signal:enriched'
   | 'decay:sweep'
   | 'claim:released'
   | 'environment:snapshot'

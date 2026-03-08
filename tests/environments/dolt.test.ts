@@ -255,6 +255,37 @@ function handleWriteQuery(sql: string): Response {
     }
   }
 
+  // UPDATE signals SET payload/tags/concentration WHERE id = ... AND withdrawn = FALSE
+  if (upper.includes('SET') && !upper.includes('WITHDRAWN = TRUE') && !upper.includes('CLAIMED_BY') && upper.includes('WHERE ID =') && upper.includes('WITHDRAWN = FALSE')) {
+    const idMatch = sql.match(/WHERE id = '([^']+)'/i);
+    if (idMatch) {
+      const signal = signalStore[idMatch[1]];
+      if (signal && !signal.withdrawn) {
+        // Parse SET clauses
+        const payloadMatch = sql.match(/payload = '(.+?)'/i);
+        if (payloadMatch) {
+          signal.payload = payloadMatch[1];
+        }
+        const tagsMatch = sql.match(/tags = '(.+?)'/i);
+        if (tagsMatch) {
+          signal.tags = tagsMatch[1];
+        }
+        const concMatch = sql.match(/concentration = (\d+\.?\d*)/i);
+        if (concMatch) {
+          signal.concentration = parseFloat(concMatch[1]);
+        }
+        return makeResponse({
+          done: true,
+          query_execution_message: 'Query OK, 1 row affected.',
+        });
+      }
+      return makeResponse({
+        done: true,
+        query_execution_message: 'Query OK, 0 rows affected.',
+      });
+    }
+  }
+
   // Decay evaporate (SET withdrawn = TRUE WHERE ... concentration/ttl condition)
   if (upper.includes('SET WITHDRAWN = TRUE') && upper.includes('WITHDRAWN = FALSE') && (upper.includes('0.05') || upper.includes('TTL'))) {
     let count = 0;
@@ -658,6 +689,50 @@ describe('withdraw', () => {
 
   it('does not throw for nonexistent signal', async () => {
     await expect(env.withdraw('sig_nonexistent')).resolves.toBeUndefined();
+  });
+});
+
+// ── update ──────────────────────────────────────────────────
+
+describe('update', () => {
+  it('merges payload via SQL UPDATE', async () => {
+    const signal = await depositTask('merge-test');
+    const updated = await env.update(signal.id, { payload: { enriched: true } });
+
+    expect(updated.payload).toHaveProperty('name', 'merge-test');
+    expect(updated.payload).toHaveProperty('enriched', true);
+  });
+
+  it('updates tags via SQL UPDATE', async () => {
+    const signal = await depositTask('tag-test');
+    const updated = await env.update(signal.id, { meta: { tags: ['new', 'fresh'] } });
+
+    expect(updated.meta.tags).toEqual(['new', 'fresh']);
+  });
+
+  it('updates concentration via SQL UPDATE', async () => {
+    const signal = await depositTask('conc-test');
+    const updated = await env.update(signal.id, { meta: { concentration: 0.7 } });
+
+    expect(updated.meta.concentration).toBe(0.7);
+  });
+
+  it('throws for nonexistent signal', async () => {
+    // Ensure init
+    await depositTask('init');
+
+    await expect(
+      env.update('sig_nonexistent', { payload: { x: 1 } })
+    ).rejects.toThrow('not found');
+  });
+
+  it('throws for withdrawn signal', async () => {
+    const signal = await depositTask('will-withdraw');
+    await env.withdraw(signal.id);
+
+    await expect(
+      env.update(signal.id, { payload: { x: 1 } })
+    ).rejects.toThrow('not found');
   });
 });
 
