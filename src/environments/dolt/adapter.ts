@@ -42,12 +42,15 @@ import { registerEnvironment } from '../../core/environment-registry.js';
 import { createSignal, matchesQuery } from '../../core/signal.js';
 import { validateSignalInput } from '../../core/validation.js';
 import { DoltHubClient, sqlValue, type DoltHubConfig } from './client.js';
+import { tryCreateSQLClient, type DoltSQLClient, type DoltSQLConfig } from './sql-client.js';
 
 export interface DoltEnvConfig extends DoltHubConfig {
   /** Human-readable name */
   name?: string;
   /** Poll interval for watch() in milliseconds (default: 5000) */
   pollInterval?: number;
+  /** Optional mysql2 wire protocol connection — used for ACID transactions */
+  sql?: DoltSQLConfig;
 }
 
 const CREATE_TABLE_SQL = `CREATE TABLE IF NOT EXISTS signals (
@@ -72,6 +75,7 @@ const CREATE_TABLE_SQL = `CREATE TABLE IF NOT EXISTS signals (
 export class DoltEnvironment implements SerializableEnvironment {
   readonly name: string;
   private client: DoltHubClient;
+  private sqlClient?: DoltSQLClient;
   private config: DoltEnvConfig;
   private pollInterval: number;
   private initialized = false;
@@ -85,8 +89,22 @@ export class DoltEnvironment implements SerializableEnvironment {
 
   private async ensureInit(): Promise<void> {
     if (this.initialized) return;
-    await this.client.execute(CREATE_TABLE_SQL);
+
+    // Try to connect via mysql2 if sql config provided
+    if (this.config.sql && !this.sqlClient) {
+      const client = await tryCreateSQLClient(this.config.sql);
+      if (client) {
+        this.sqlClient = client;
+      }
+    }
+
+    await this.activeClient.execute(CREATE_TABLE_SQL);
     this.initialized = true;
+  }
+
+  /** Returns the SQL client if available, otherwise falls back to HTTP client */
+  private get activeClient(): { query: DoltHubClient['query']; execute: DoltHubClient['execute'] } {
+    return this.sqlClient ?? this.client;
   }
 
   // ----------------------------------------------------------
@@ -126,7 +144,7 @@ export class DoltEnvironment implements SerializableEnvironment {
       sql += ` LIMIT ${query.limit}`;
     }
 
-    const { rows } = await this.client.query(sql);
+    const { rows } = await this.activeClient.query(sql);
     let signals = rows.map(rowToSignal);
 
     // Apply custom filter predicate if provided (can't express in SQL)
@@ -153,15 +171,72 @@ export class DoltEnvironment implements SerializableEnvironment {
 
     const sql = `INSERT INTO signals (id, type, payload, deposited_at, deposited_by, concentration, ttl, caused_by, tags, withdrawn) VALUES (${sqlValue(signal.id)}, ${sqlValue(signal.type)}, ${sqlValue(JSON.stringify(signal.payload))}, ${sqlValue(signal.meta.deposited_at)}, ${sqlValue(signal.meta.deposited_by)}, ${sqlValue(signal.meta.concentration)}, ${signal.meta.ttl != null ? sqlValue(signal.meta.ttl) : 'NULL'}, ${signal.meta.caused_by ? sqlValue(JSON.stringify(signal.meta.caused_by)) : 'NULL'}, ${signal.meta.tags ? sqlValue(JSON.stringify(signal.meta.tags)) : 'NULL'}, FALSE)`;
 
-    await this.client.execute(sql);
+    await this.activeClient.execute(sql);
     return signal;
   }
 
   async withdraw(signalId: string): Promise<void> {
     await this.ensureInit();
-    await this.client.execute(
+    await this.activeClient.execute(
       `UPDATE signals SET withdrawn = TRUE WHERE id = ${sqlValue(signalId)}`,
     );
+  }
+
+  async update(
+    signalId: string,
+    changes: {
+      payload?: Record<string, unknown>;
+      meta?: Partial<Pick<SignalMeta, 'tags' | 'concentration'>>;
+    },
+  ): Promise<Signal> {
+    await this.ensureInit();
+
+    const setClauses: string[] = [];
+
+    if (changes.payload) {
+      // Read current payload, merge, then SET
+      const { rows } = await this.activeClient.query(
+        `SELECT payload FROM signals WHERE id = ${sqlValue(signalId)} AND withdrawn = FALSE`,
+      );
+      if (rows.length === 0) {
+        throw new Error(`Signal ${signalId} not found or already withdrawn`);
+      }
+      const current = (parseJSON((rows[0] as Record<string, unknown>).payload) ?? {}) as Record<string, unknown>;
+      const merged = { ...current, ...changes.payload };
+      setClauses.push(`payload = ${sqlValue(JSON.stringify(merged))}`);
+    }
+
+    if (changes.meta?.tags !== undefined) {
+      setClauses.push(`tags = ${sqlValue(JSON.stringify(changes.meta.tags))}`);
+    }
+
+    if (changes.meta?.concentration !== undefined) {
+      setClauses.push(`concentration = ${sqlValue(changes.meta.concentration)}`);
+    }
+
+    if (setClauses.length === 0) {
+      // No changes — just read and return
+      const { rows } = await this.activeClient.query(
+        `SELECT * FROM signals WHERE id = ${sqlValue(signalId)} AND withdrawn = FALSE`,
+      );
+      if (rows.length === 0) {
+        throw new Error(`Signal ${signalId} not found or already withdrawn`);
+      }
+      return rowToSignal(rows[0] as Record<string, unknown>);
+    }
+
+    const updateSql = `UPDATE signals SET ${setClauses.join(', ')} WHERE id = ${sqlValue(signalId)} AND withdrawn = FALSE`;
+    const result = await this.activeClient.execute(updateSql);
+
+    if (result.affectedRows === 0) {
+      throw new Error(`Signal ${signalId} not found or already withdrawn`);
+    }
+
+    // Re-read the updated signal
+    const { rows } = await this.activeClient.query(
+      `SELECT * FROM signals WHERE id = ${sqlValue(signalId)}`,
+    );
+    return rowToSignal(rows[0] as Record<string, unknown>);
   }
 
   async claim(
@@ -174,13 +249,13 @@ export class DoltEnvironment implements SerializableEnvironment {
 
     const sql = `UPDATE signals SET claimed_by = ${sqlValue(claimant)}, claimed_at = ${sqlValue(now)}, claim_lease = ${sqlValue(leaseDuration)} WHERE id = ${sqlValue(signalId)} AND withdrawn = FALSE AND (claimed_by IS NULL OR (claimed_at + claim_lease) < ${sqlValue(now)})`;
 
-    const result = await this.client.execute(sql);
+    const result = await this.activeClient.execute(sql);
     return result.affectedRows > 0;
   }
 
   async release(signalId: string): Promise<void> {
     await this.ensureInit();
-    await this.client.execute(
+    await this.activeClient.execute(
       `UPDATE signals SET claimed_by = NULL, claimed_at = NULL, claim_lease = NULL WHERE id = ${sqlValue(signalId)}`,
     );
   }
@@ -248,7 +323,7 @@ export class DoltEnvironment implements SerializableEnvironment {
       sql += ` LIMIT ${query.limit}`;
     }
 
-    const { rows } = await this.client.query(sql);
+    const { rows } = await this.activeClient.query(sql);
     let signals = rows.map(rowToSignal);
 
     if (query.filter) {
@@ -264,19 +339,19 @@ export class DoltEnvironment implements SerializableEnvironment {
     const result: DecayResult = { decayed: 0, evaporated: 0, claimsReleased: 0 };
 
     // Step 1: Release expired claims
-    const claimResult = await this.client.execute(
+    const claimResult = await this.activeClient.execute(
       `UPDATE signals SET claimed_by = NULL, claimed_at = NULL, claim_lease = NULL WHERE claimed_by IS NOT NULL AND (claimed_at + claim_lease) < ${sqlValue(now)}`,
     );
     result.claimsReleased = claimResult.affectedRows;
 
     // Step 2: Evaporate signals below floor or past TTL
-    const evapResult = await this.client.execute(
+    const evapResult = await this.activeClient.execute(
       `UPDATE signals SET withdrawn = TRUE WHERE withdrawn = FALSE AND ((concentration - (0.01 * (${sqlValue(now)} - deposited_at) / 1000.0)) < 0.05 OR (ttl IS NOT NULL AND (deposited_at + ttl) < ${sqlValue(now)}))`,
     );
     result.evaporated = evapResult.affectedRows;
 
     // Step 3: Update remaining concentrations
-    const decayResult = await this.client.execute(
+    const decayResult = await this.activeClient.execute(
       `UPDATE signals SET concentration = GREATEST(0, concentration - (0.01 * (${sqlValue(now)} - deposited_at) / 1000.0)) WHERE withdrawn = FALSE`,
     );
     result.decayed = decayResult.affectedRows;
@@ -286,7 +361,7 @@ export class DoltEnvironment implements SerializableEnvironment {
 
   async snapshot(): Promise<Signal[]> {
     await this.ensureInit();
-    const { rows } = await this.client.query(
+    const { rows } = await this.activeClient.query(
       'SELECT * FROM signals WHERE withdrawn = FALSE ORDER BY concentration DESC',
     );
     return rows.map(rowToSignal);
@@ -394,4 +469,5 @@ registerEnvironment('dolt', (c) => new DoltEnvironment({
   branch: c.branch as string | undefined,
   apiBase: c.apiBase as string | undefined,
   name: c.name,
+  sql: c.sql as DoltSQLConfig | undefined,
 }));
