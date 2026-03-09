@@ -3,49 +3,29 @@
 // Code Pipeline — Docker Host
 // ============================================================
 // Same colonies as index.ts, but running as Docker containers
-// via the Mandible Cloud API. The colony definitions are
-// identical — only the host changes.
-//
-// Prerequisites:
-//   - Mandible Cloud API running (local or remote)
-//   - MANDIBLE_API_URL and MANDIBLE_API_KEY set
+// on the local Docker daemon. Colony definitions must use
+// module refs (closures can't cross container boundaries).
 //
 // To run:
-//   export MANDIBLE_API_URL=http://localhost:9091
-//   export MANDIBLE_API_KEY=your-api-key
 //   npx tsx examples/code-pipeline/docker.ts
 // ============================================================
 
 import { mandible, FilesystemEnvironment, docker, type DockerHostMetadata } from '../../src/index.js';
-import { shaper, critic, keeper, SEED_TASKS } from './colonies.js';
-
-const apiUrl = process.env.MANDIBLE_API_URL;
-const apiKey = process.env.MANDIBLE_API_KEY;
-
-if (!apiUrl || !apiKey) {
-  console.error('Set MANDIBLE_API_URL and MANDIBLE_API_KEY');
-  process.exit(1);
-}
+import { SEED_TASKS } from './colonies.js';
 
 const env = new FilesystemEnvironment({ root: '/tmp/mandible-demo', name: 'code-pipeline' });
 
-// Same colonies, different host
 const host = await mandible('code-pipeline')
   .environment(env)
-  .host(docker({
-    apiUrl,
-    apiKey,
-    image: 'mandible-colony:latest',
-  }))
-  .colony('shaper', shaper)
-  .colony('critic', critic)
-  .colony('keeper', keeper)
+  .host(docker({ image: 'mandible-colony:latest' }))
+  .colony('shaper', { module: './colonies.ts', export: 'shaper' })
+  .colony('critic', { module: './colonies.ts', export: 'critic' })
+  .colony('keeper', { module: './colonies.ts', export: 'keeper' })
   .start();
 
 const meta = host.metadata as DockerHostMetadata;
 console.log(`Started ${host.colonies.length} colonies on ${host.name} host`);
-console.log(`Project: ${meta.projectId}`);
-console.log(`Signal server: ${meta.signalServerUrl}\n`);
+console.log('Containers:', meta.containers);
 
 // Seed tasks
 for (const task of SEED_TASKS) {

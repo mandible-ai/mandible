@@ -125,7 +125,7 @@ export class MandibleBuilder {
    * Start colonies on the configured host.
    * What "start" means depends on the host:
    * - local():  starts Node runtimes in the current process
-   * - docker(): launches Docker containers via Cloud API
+   * - docker(): launches Docker containers on local daemon
    * - cloud():  launches Edera microVMs via Cloud API
    *
    * Returns the host — use host.stop() to shut down,

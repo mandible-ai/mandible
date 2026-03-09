@@ -199,7 +199,7 @@ describe('DoltEnvironment serialization', () => {
 
 // ── DockerHost serialization output ──────────────────────────
 
-describe('DockerHost serializeEnvironment output compatibility', () => {
+describe('Environment serialization output compatibility', () => {
   // These tests verify the serialized output matches what the old constructor.name
   // approach produced, ensuring wire format compatibility.
 
