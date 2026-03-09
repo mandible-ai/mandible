@@ -48,3 +48,27 @@ export function validateSignalInput(
     }
   }
 }
+
+export function validateUpdateInput(
+  changes: { payload?: Record<string, unknown>; meta?: { tags?: string[]; concentration?: number } }
+): void {
+  if (changes.payload !== undefined) {
+    if (changes.payload === null || typeof changes.payload !== 'object' || Array.isArray(changes.payload)) {
+      throw new SignalValidationError('Update payload must be a plain object (not null, not array)');
+    }
+  }
+
+  if (changes.meta) {
+    if (changes.meta.concentration !== undefined) {
+      if (typeof changes.meta.concentration !== 'number' || changes.meta.concentration < 0 || changes.meta.concentration > 1) {
+        throw new SignalValidationError('Update meta.concentration must be a number between 0 and 1');
+      }
+    }
+
+    if (changes.meta.tags !== undefined) {
+      if (!Array.isArray(changes.meta.tags) || !changes.meta.tags.every(t => typeof t === 'string')) {
+        throw new SignalValidationError('Update meta.tags must be an array of strings');
+      }
+    }
+  }
+}

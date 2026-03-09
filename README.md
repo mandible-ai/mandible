@@ -86,7 +86,7 @@ await host.stop();
 
 #### Docker
 
-Runs each colony in a Docker container. Same colony definitions, but the runtime boundary is containers instead of running in-process:
+Runs each colony in a Docker container on the local daemon. Colonies must use module refs instead of closures (closures can't cross container boundaries):
 
 ```typescript
 import { mandible, FilesystemEnvironment, docker } from '@mandible-ai/mandible';
@@ -96,9 +96,9 @@ const env = new FilesystemEnvironment({ root: './.mandible/signals' });
 const host = await mandible('code-pipeline')
   .environment(env)
   .host(docker({ image: 'mandible-colony:latest' }))
-  .colony('shaper', shaper)
-  .colony('critic', critic)
-  .colony('keeper', keeper)
+  .colony('shaper', { module: './colonies.ts', export: 'shaper' })
+  .colony('critic', { module: './colonies.ts', export: 'critic' })
+  .colony('keeper', { module: './colonies.ts', export: 'keeper' })
   .start();
 
 await host.dashboard(); // signal snapshots + colony names from containers
@@ -507,9 +507,7 @@ Colony definitions live in `colonies.ts` and are shared across all hosting modes
 # Local host (default)
 npx tsx examples/code-pipeline/index.ts
 
-# Docker host
-export MANDIBLE_API_URL=http://localhost:9091
-export MANDIBLE_API_KEY=your-key
+# Docker host (requires Docker and mandible-colony image)
 npx tsx examples/code-pipeline/docker.ts
 
 # With real LLM providers

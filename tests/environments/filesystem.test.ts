@@ -213,6 +213,66 @@ describe('withdraw', () => {
   });
 });
 
+// ── update ──────────────────────────────────────────────────
+
+describe('update', () => {
+  it('merges payload fields (existing + new)', async () => {
+    const signal = await depositTask('merge', { extra: 'data' });
+    const updated = await env.update(signal.id, { payload: { enriched: true } });
+
+    expect(updated.payload).toEqual({ name: 'merge', extra: 'data', enriched: true });
+  });
+
+  it('updates tags', async () => {
+    const signal = await env.deposit({
+      type: 'task:ready',
+      payload: { name: 'tagged' },
+      meta: { deposited_by: 'test', tags: ['old'] },
+    });
+    const updated = await env.update(signal.id, { meta: { tags: ['new', 'fresh'] } });
+
+    expect(updated.meta.tags).toEqual(['new', 'fresh']);
+  });
+
+  it('updates concentration', async () => {
+    const signal = await depositTask('conc');
+    const updated = await env.update(signal.id, { meta: { concentration: 0.5 } });
+
+    expect(updated.meta.concentration).toBe(0.5);
+  });
+
+  it('persists to disk (re-observe returns merged data)', async () => {
+    const signal = await depositTask('persist');
+    await env.update(signal.id, { payload: { persisted: true } });
+
+    const observed = await env.observe({ type: 'task:ready' });
+    const found = observed.find(s => s.id === signal.id)!;
+    expect(found.payload).toEqual({ name: 'persist', persisted: true });
+  });
+
+  it('throws for nonexistent signal', async () => {
+    await env.snapshot(); // ensure init
+    await expect(
+      env.update('sig_nonexistent', { payload: { x: 1 } })
+    ).rejects.toThrow('not found');
+  });
+
+  it('preserves other meta fields unchanged', async () => {
+    const signal = await env.deposit({
+      type: 'task:ready',
+      payload: { name: 'preserve' },
+      meta: { deposited_by: 'test', ttl: 5000, tags: ['keep'] },
+    });
+
+    const updated = await env.update(signal.id, { payload: { added: true } });
+
+    expect(updated.meta.deposited_by).toBe('test');
+    expect(updated.meta.ttl).toBe(5000);
+    expect(updated.meta.tags).toEqual(['keep']);
+    expect(updated.payload).toEqual({ name: 'preserve', added: true });
+  });
+});
+
 // ── claim / release ─────────────────────────────────────────
 
 describe('claim', () => {

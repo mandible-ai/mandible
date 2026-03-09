@@ -142,6 +142,12 @@ export class ColonyBuilder<T = Record<string, unknown>> {
     return this;
   }
 
+  /** Enable or disable decay sweeps for this colony */
+  decay(enabled: boolean): this {
+    this._config.decay = enabled;
+    return this;
+  }
+
   /** Configure heartbeat — periodic signals during long-running actions */
   heartbeat(intervalMs: number, opts?: { ttl?: number; type?: string }): this {
     this._config.heartbeat = { interval: intervalMs, ttl: opts?.ttl, type: opts?.type };

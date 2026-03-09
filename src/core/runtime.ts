@@ -103,11 +103,14 @@ export class ColonyRuntime implements IColonyRuntime {
       }
     }
 
-    // Start decay sweep
-    this.decayTimer = setInterval(
-      () => this.runDecay(),
-      this.decayPolicy.interval,
-    );
+    // Start decay sweep (unless disabled)
+    const decayEnabled = this.definition.config?.decay !== false;
+    if (decayEnabled) {
+      this.decayTimer = setInterval(
+        () => this.runDecay(),
+        this.decayPolicy.interval,
+      );
+    }
 
     // Start scaler if concurrency is a range with autoscale policy
     if (typeof this.definition.concurrency === 'object' && this.definition.config?.autoscale) {
@@ -517,6 +520,30 @@ export class ColonyRuntime implements IColonyRuntime {
           signalId,
         });
         runtime.log('debug', `Withdrew signal ${signalId}`);
+      },
+
+      async enrich(signalId, changes) {
+        if (!env.update) {
+          throw new Error(
+            `Environment "${env.name}" does not support update() — enrich() requires an environment that implements update()`
+          );
+        }
+        const updateChanges: {
+          payload?: Record<string, unknown>;
+          meta?: Partial<Pick<import('./types.js').SignalMeta, 'tags' | 'concentration'>>;
+        } = {};
+        if (changes.payload) updateChanges.payload = changes.payload;
+        if (changes.tags) updateChanges.meta = { tags: changes.tags };
+        const updated = await env.update(signalId, updateChanges);
+        runtime.emitEvent({
+          type: 'signal:enriched',
+          colony: colonyName,
+          timestamp: Date.now(),
+          signalId,
+          signalType: updated.type,
+        });
+        runtime.log('debug', `Enriched signal ${signalId}`);
+        return updated;
       },
 
       log(message, level = 'info') {

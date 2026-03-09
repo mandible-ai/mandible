@@ -1000,6 +1000,57 @@ describe('GitHubEnvironment — withdraw', () => {
   });
 });
 
+describe('GitHubEnvironment — update', () => {
+  it('merges payload on in-memory signal', async () => {
+    setMockIssues([makeIssue({ number: 1, title: 'Test' })]);
+    const env = createEnv();
+    await env.sync();
+
+    const updated = await env.update('gh:test/repo#1', {
+      payload: { enriched: true, score: 42 },
+    });
+
+    expect(updated.payload).toHaveProperty('enriched', true);
+    expect(updated.payload).toHaveProperty('score', 42);
+    // Original payload fields should still be present
+    expect(updated.payload).toHaveProperty('title', 'Test');
+  });
+
+  it('updates tags', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+    const env = createEnv();
+    await env.sync();
+
+    const updated = await env.update('gh:test/repo#1', {
+      meta: { tags: ['new-tag', 'important'] },
+    });
+
+    expect(updated.meta.tags).toEqual(['new-tag', 'important']);
+  });
+
+  it('updates concentration', async () => {
+    setMockIssues([makeIssue({ number: 1 })]);
+    const env = createEnv();
+    await env.sync();
+
+    const updated = await env.update('gh:test/repo#1', {
+      meta: { concentration: 0.42 },
+    });
+
+    expect(updated.meta.concentration).toBe(0.42);
+  });
+
+  it('throws for nonexistent signal', async () => {
+    setMockIssues([]);
+    const env = createEnv();
+    await env.sync();
+
+    await expect(
+      env.update('gh:test/repo#999', { payload: { x: 1 } })
+    ).rejects.toThrow('not found');
+  });
+});
+
 describe('GitHubEnvironment — claim / release', () => {
   it('successfully claims an unclaimed signal', async () => {
     setMockIssues([makeIssue({ number: 1 })]);

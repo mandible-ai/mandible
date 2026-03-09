@@ -12,6 +12,11 @@ const command = args[0];
 
 async function main() {
   switch (command) {
+    case 'init': {
+      const { runInit } = await import('./init.js');
+      await runInit(args.slice(1));
+      break;
+    }
     case 'dev':
       await runDev(args.slice(1));
       break;
@@ -36,6 +41,7 @@ function printHelp() {
   mandible — stigmergy framework for autonomous agent coordination
 
   Usage:
+    mandible init            Scaffold a new mandible.config.ts
     mandible dev [config]    Start colonies + open dashboard
 
   Options:

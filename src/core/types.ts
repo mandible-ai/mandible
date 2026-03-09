@@ -147,6 +147,15 @@ export interface Environment {
   /** Withdraw (remove) a signal from the environment */
   withdraw(signalId: string): Promise<void>;
 
+  /** Update a signal in-place (merge payload, update meta). Optional — not all environments support it. */
+  update?(
+    signalId: string,
+    changes: {
+      payload?: Record<string, unknown>;
+      meta?: Partial<Pick<SignalMeta, 'tags' | 'concentration'>>;
+    }
+  ): Promise<Signal>;
+
   /**
    * Attempt to claim a signal. Returns true if claim succeeded.
    * Supports optimistic concurrency — if two agents claim simultaneously,
@@ -350,6 +359,12 @@ export interface ActionContext {
   /** Withdraw a signal (typically the one being processed) */
   withdraw(signalId: string): Promise<void>;
 
+  /** Enrich a signal in-place — merge payload fields and/or update tags */
+  enrich(
+    signalId: string,
+    changes: { payload?: Record<string, unknown>; tags?: string[] }
+  ): Promise<Signal>;
+
   /** Log a message (routed through the framework's logging) */
   log(message: string, level?: 'debug' | 'info' | 'warn' | 'error'): void;
 
@@ -372,6 +387,9 @@ export interface ColonyConfig {
 
   /** Decay configuration for signals this colony deposits */
   decayRate?: number; // concentration units per second
+
+  /** Set to false to disable decay sweeps entirely. Default: true. */
+  decay?: boolean;
 
   /** Max time a single rule action can take before timeout */
   actionTimeout?: number;

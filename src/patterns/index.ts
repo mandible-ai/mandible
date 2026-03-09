@@ -6,3 +6,9 @@ export type { Sentinel, SentinelConfig, SentinelEvaluation, SentinelStats } from
 
 export { createDebugBridge } from './debug-bridge.js';
 export type { DebugBridge, DebugBridgeConfig } from './debug-bridge.js';
+
+export { createGate } from './gate.js';
+export type { SignalGate, GateConfig, GatedSignalOptions, GateStats } from './gate.js';
+
+export { createBarrier } from './barrier.js';
+export type { SignalBarrier, BarrierConfig, BarrierStats } from './barrier.js';
