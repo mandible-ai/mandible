@@ -37,6 +37,10 @@ export type {
 export { withQwenCode } from './qwen-code.js';
 export type { QwenCodeConfig, QwenCodeResult } from './qwen-code.js';
 
+// Skill-based colony provider
+export { withSkill, loadSkills, loadSkill, parseFrontmatter } from './skill.js';
+export type { SkillConfig, Skill, SkillMeta } from './skill.js';
+
 // Context assembly
 export { assembleContext, withContext } from './context.js';
 

@@ -122,6 +122,15 @@ export interface ClaudeCodeConfig<T = Record<string, unknown>> {
   env?: Record<string, string>;
 
   /**
+   * Custom API base URL. Routes the Claude Code SDK to a local or
+   * third-party endpoint that speaks the Anthropic Messages API
+   * (e.g. Ollama, llama.cpp, LM Studio).
+   *
+   * Sets ANTHROPIC_BASE_URL in the agent's environment.
+   */
+  apiBaseUrl?: string;
+
+  /**
    * Route the agent through AWS Bedrock.
    * Sets the required env vars for the Claude Agent SDK automatically.
    */
