@@ -124,6 +124,7 @@ export { withClaudeCode } from './providers/claude-code.js';
 export { withStructuredOutput } from './providers/structured-output.js';
 export { withLLM } from './providers/llm.js';
 export { withBash } from './providers/bash.js';
+export { withOpenCode } from './providers/opencode.js';
 export { assembleContext, withContext } from './providers/context.js';
 
 export type {
@@ -139,3 +140,5 @@ export type {
   OutputMapping,
   ContextAssemblyConfig,
 } from './providers/types.js';
+
+export type { OpenCodeConfig, OpenCodeResult } from './providers/opencode.js';
