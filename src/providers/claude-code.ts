@@ -33,6 +33,7 @@ export function withClaudeCode<T = Record<string, unknown>>(
     permissionMode = 'bypassPermissions',
     onMessage,
     env,
+    apiBaseUrl,
     bedrock,
     output,
     autoWithdraw = true,
@@ -68,10 +69,11 @@ export function withClaudeCode<T = Record<string, unknown>>(
       if (disallowedTools) queryOptions.disallowedTools = disallowedTools;
       if (maxTurns !== undefined) queryOptions.maxTurns = maxTurns;
 
-      // Merge Bedrock env vars with user-provided env (user takes precedence)
+      // Merge env vars: apiBaseUrl (lowest) → bedrock → explicit env (highest)
+      const apiBaseUrlEnv = apiBaseUrl ? { ANTHROPIC_BASE_URL: apiBaseUrl } : undefined;
       const bedrockEnv = bedrock ? buildBedrockEnv(bedrock) : undefined;
-      const mergedEnv = bedrockEnv || env
-        ? { ...bedrockEnv, ...env }
+      const mergedEnv = apiBaseUrlEnv || bedrockEnv || env
+        ? { ...apiBaseUrlEnv, ...bedrockEnv, ...env }
         : undefined;
       if (mergedEnv) queryOptions.env = mergedEnv;
 

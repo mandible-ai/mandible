@@ -446,6 +446,75 @@ describe('withClaudeCode', () => {
     expect(logLine).toContain('5000ms');
   });
 
+  describe('apiBaseUrl', () => {
+    it('sets ANTHROPIC_BASE_URL in SDK env', async () => {
+      mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
+
+      const withClaudeCode = await loadWithClaudeCode();
+      const handler = withClaudeCode({
+        prompt: 'test',
+        apiBaseUrl: 'http://localhost:11434',
+        output: { type: 'done' },
+      });
+
+      await handler(makeSignal(), makeContext());
+
+      const opts = mockQuery.mock.calls[0][0].options;
+      expect(opts.env.ANTHROPIC_BASE_URL).toBe('http://localhost:11434');
+    });
+
+    it('explicit env overrides apiBaseUrl', async () => {
+      mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
+
+      const withClaudeCode = await loadWithClaudeCode();
+      const handler = withClaudeCode({
+        prompt: 'test',
+        apiBaseUrl: 'http://localhost:11434',
+        env: { ANTHROPIC_BASE_URL: 'http://custom:8080' },
+        output: { type: 'done' },
+      });
+
+      await handler(makeSignal(), makeContext());
+
+      const opts = mockQuery.mock.calls[0][0].options;
+      expect(opts.env.ANTHROPIC_BASE_URL).toBe('http://custom:8080');
+    });
+
+    it('merges with Bedrock env vars', async () => {
+      mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
+
+      const withClaudeCode = await loadWithClaudeCode();
+      const handler = withClaudeCode({
+        prompt: 'test',
+        apiBaseUrl: 'http://localhost:11434',
+        bedrock: { region: 'us-west-2' },
+        output: { type: 'done' },
+      });
+
+      await handler(makeSignal(), makeContext());
+
+      const opts = mockQuery.mock.calls[0][0].options;
+      expect(opts.env.ANTHROPIC_BASE_URL).toBe('http://localhost:11434');
+      expect(opts.env.CLAUDE_CODE_USE_BEDROCK).toBe('1');
+      expect(opts.env.AWS_REGION).toBe('us-west-2');
+    });
+
+    it('does not set env when apiBaseUrl is absent', async () => {
+      mockQuery.mockReturnValue(createMockGenerator([makeResultMessage()]));
+
+      const withClaudeCode = await loadWithClaudeCode();
+      const handler = withClaudeCode({
+        prompt: 'test',
+        output: { type: 'done' },
+      });
+
+      await handler(makeSignal(), makeContext());
+
+      const opts = mockQuery.mock.calls[0][0].options;
+      expect(opts.env).toBeUndefined();
+    });
+  });
+
   it('re-throws non-module errors from SDK', async () => {
     vi.resetModules();
     vi.doMock('@anthropic-ai/claude-agent-sdk', () => ({

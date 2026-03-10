@@ -380,9 +380,6 @@ export class DoltEnvironment implements SerializableEnvironment {
       branch: this.config.branch,
       apiBase: this.config.apiBase,
     };
-    if (this.config.sql) {
-      config.sql = this.config.sql;
-    }
     return config;
   }
 

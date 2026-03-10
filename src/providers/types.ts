@@ -122,6 +122,15 @@ export interface ClaudeCodeConfig<T = Record<string, unknown>> {
   env?: Record<string, string>;
 
   /**
+   * Custom API base URL. Routes the Claude Code SDK to a local or
+   * third-party endpoint that speaks the Anthropic Messages API
+   * (e.g. Ollama, llama.cpp, LM Studio).
+   *
+   * Sets ANTHROPIC_BASE_URL in the agent's environment.
+   */
+  apiBaseUrl?: string;
+
+  /**
    * Route the agent through AWS Bedrock.
    * Sets the required env vars for the Claude Agent SDK automatically.
    */
@@ -209,6 +218,71 @@ export interface StructuredOutputConfig<T = Record<string, unknown>, R = Record<
    */
   route: string | ((result: R, signal: Signal<T>) => SignalDeposit | SignalDeposit[]);
 
+  autoWithdraw?: boolean;
+}
+
+/**
+ * Config for plain text LLM provider (withLLM).
+ * Calls an LLM and returns raw text — no schema validation.
+ * Use for summarization, prose generation, or open-ended responses.
+ * Provider-agnostic: works with Anthropic, OpenAI, Bedrock, Vercel AI, or custom.
+ */
+export interface LLMConfig<T = Record<string, unknown>> {
+  /** Model identifier. Format depends on the SDK you're using. */
+  model: string;
+
+  /**
+   * Provider SDK to use for the LLM call.
+   * 'anthropic' = @anthropic-ai/sdk
+   * 'bedrock' = @anthropic-ai/bedrock-sdk (Claude via AWS Bedrock)
+   * 'openai' = openai SDK
+   * 'vercel-ai' = Vercel AI SDK (ai package)
+   * Or pass a custom function.
+   */
+  provider?: 'anthropic' | 'bedrock' | 'openai' | 'vercel-ai' | LLMCallFunction<string>;
+
+  /** Build the prompt from the signal. */
+  prompt: string | ((signal: Signal<T>) => string | Promise<string>);
+
+  /** System prompt. */
+  systemPrompt?: string;
+
+  /**
+   * Bedrock configuration. Required when provider is 'bedrock'.
+   * Provides AWS region, credentials, and optional guardrail settings.
+   */
+  bedrockConfig?: BedrockConfig;
+
+  /** Max tokens (default: 4096). */
+  maxTokens?: number;
+
+  /** Temperature 0-1. Lower = more deterministic (default: 0). */
+  temperature?: number;
+
+  /**
+   * Expected response format. Appends a format instruction to the prompt
+   * and includes `format` in the default payload so downstream colonies
+   * can branch on it without guessing.
+   *
+   * - 'text' (default): no format instruction appended, payload is { text }.
+   * - 'markdown': instructs the LLM to respond in markdown, payload is { text, format: 'markdown' }.
+   *
+   * Only affects the default string-route payload. When `route` is a function,
+   * format metadata is your responsibility.
+   */
+  format?: 'text' | 'markdown';
+
+  /**
+   * Route output to signal type(s).
+   * If a string, deposits that type with { text } (or { text, format } when format is set) as payload.
+   * If a function, returns the signal deposit(s) — full control over payload shape.
+   */
+  route: string | ((text: string, signal: Signal<T>) => SignalDeposit | SignalDeposit[]);
+
+  /**
+   * Whether to auto-withdraw the triggering signal after success.
+   * Defaults to true.
+   */
   autoWithdraw?: boolean;
 }
 

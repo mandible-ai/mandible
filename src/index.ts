@@ -122,6 +122,7 @@ export type { DashboardSource, DashboardHandle, ColonyInfo, DashboardOptions as 
 // Action providers
 export { withClaudeCode } from './providers/claude-code.js';
 export { withStructuredOutput } from './providers/structured-output.js';
+export { withLLM } from './providers/llm.js';
 export { withBash } from './providers/bash.js';
 export { assembleContext, withContext } from './providers/context.js';
 
@@ -131,6 +132,7 @@ export type {
   AgentResult,
   BedrockConfig,
   StructuredOutputConfig,
+  LLMConfig,
   BashProviderConfig,
   LLMCallFunction,
   SignalDeposit,
