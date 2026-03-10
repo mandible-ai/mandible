@@ -115,6 +115,12 @@ export type { Sentinel, SentinelConfig, SentinelEvaluation, SentinelStats } from
 export { createDebugBridge } from './patterns/debug-bridge.js';
 export type { DebugBridge, DebugBridgeConfig } from './patterns/debug-bridge.js';
 
+export { createGate } from './patterns/gate.js';
+export type { SignalGate, GateConfig, GatedSignalOptions, GateStats } from './patterns/gate.js';
+
+export { createBarrier } from './patterns/barrier.js';
+export type { SignalBarrier, BarrierConfig, BarrierStats } from './patterns/barrier.js';
+
 // Dashboard
 export { startDashboard, LocalDashboardSource, resolveEnvironments } from './cli/server.js';
 export type { DashboardSource, DashboardHandle, ColonyInfo, DashboardOptions as DashboardServerOptions, SimpleConfig } from './cli/server.js';
@@ -124,6 +130,7 @@ export { withClaudeCode } from './providers/claude-code.js';
 export { withStructuredOutput } from './providers/structured-output.js';
 export { withLLM } from './providers/llm.js';
 export { withBash } from './providers/bash.js';
+export { withOpenCode } from './providers/opencode.js';
 export { assembleContext, withContext } from './providers/context.js';
 
 export type {
@@ -139,3 +146,5 @@ export type {
   OutputMapping,
   ContextAssemblyConfig,
 } from './providers/types.js';
+
+export type { OpenCodeConfig, OpenCodeResult } from './providers/opencode.js';
