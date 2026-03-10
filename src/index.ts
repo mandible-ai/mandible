@@ -115,6 +115,12 @@ export type { Sentinel, SentinelConfig, SentinelEvaluation, SentinelStats } from
 export { createDebugBridge } from './patterns/debug-bridge.js';
 export type { DebugBridge, DebugBridgeConfig } from './patterns/debug-bridge.js';
 
+export { createGate } from './patterns/gate.js';
+export type { SignalGate, GateConfig, GatedSignalOptions, GateStats } from './patterns/gate.js';
+
+export { createBarrier } from './patterns/barrier.js';
+export type { SignalBarrier, BarrierConfig, BarrierStats } from './patterns/barrier.js';
+
 // Dashboard
 export { startDashboard, LocalDashboardSource, resolveEnvironments } from './cli/server.js';
 export type { DashboardSource, DashboardHandle, ColonyInfo, DashboardOptions as DashboardServerOptions, SimpleConfig } from './cli/server.js';
