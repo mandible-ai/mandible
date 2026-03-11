@@ -78,7 +78,7 @@ export class DoltEnvironment implements SerializableEnvironment {
   private sqlClient?: DoltSQLClient;
   private config: DoltEnvConfig;
   private pollInterval: number;
-  private initialized = false;
+  private initPromise?: Promise<void>;
 
   constructor(config: DoltEnvConfig) {
     this.config = config;
@@ -87,9 +87,14 @@ export class DoltEnvironment implements SerializableEnvironment {
     this.pollInterval = config.pollInterval ?? 5000;
   }
 
-  private async ensureInit(): Promise<void> {
-    if (this.initialized) return;
+  private ensureInit(): Promise<void> {
+    if (!this.initPromise) {
+      this.initPromise = this.doInit();
+    }
+    return this.initPromise;
+  }
 
+  private async doInit(): Promise<void> {
     // Try to connect via mysql2 if sql config provided
     if (this.config.sql && !this.sqlClient) {
       const client = await tryCreateSQLClient(this.config.sql);
@@ -99,7 +104,6 @@ export class DoltEnvironment implements SerializableEnvironment {
     }
 
     await this.activeClient.execute(CREATE_TABLE_SQL);
-    this.initialized = true;
   }
 
   /** Returns the SQL client if available, otherwise falls back to HTTP client */
@@ -141,7 +145,7 @@ export class DoltEnvironment implements SerializableEnvironment {
 
     let sql = `SELECT * FROM signals WHERE ${conditions.join(' AND ')} ORDER BY concentration DESC`;
     if (query.limit) {
-      sql += ` LIMIT ${query.limit}`;
+      sql += ` LIMIT ${sanitizeLimit(query.limit)}`;
     }
 
     const { rows } = await this.activeClient.query(sql);
@@ -320,7 +324,7 @@ export class DoltEnvironment implements SerializableEnvironment {
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     let sql = `SELECT * FROM signals ${where} ORDER BY deposited_at DESC`;
     if (query.limit) {
-      sql += ` LIMIT ${query.limit}`;
+      sql += ` LIMIT ${sanitizeLimit(query.limit)}`;
     }
 
     const { rows } = await this.activeClient.query(sql);
@@ -345,14 +349,18 @@ export class DoltEnvironment implements SerializableEnvironment {
     result.claimsReleased = claimResult.affectedRows;
 
     // Step 2: Evaporate signals below floor or past TTL
+    // Target concentration = 1.0 - rate * age. Evaporate when target < 0.05.
     const evapResult = await this.activeClient.execute(
-      `UPDATE signals SET withdrawn = TRUE WHERE withdrawn = FALSE AND ((concentration - (0.01 * (${sqlValue(now)} - deposited_at) / 1000.0)) < 0.05 OR (ttl IS NOT NULL AND (deposited_at + ttl) < ${sqlValue(now)}))`,
+      `UPDATE signals SET withdrawn = TRUE WHERE withdrawn = FALSE AND ((1.0 - (0.01 * (${sqlValue(now)} - deposited_at) / 1000.0)) < 0.05 OR (ttl IS NOT NULL AND (deposited_at + ttl) < ${sqlValue(now)}))`,
     );
     result.evaporated = evapResult.affectedRows;
 
     // Step 3: Update remaining concentrations
+    // Directly SET the target concentration (linear decay from 1.0).
+    // Use LEAST(concentration, target) to never increase concentration
+    // (handles signals deposited at <1.0, e.g. gated signals).
     const decayResult = await this.activeClient.execute(
-      `UPDATE signals SET concentration = GREATEST(0, concentration - (0.01 * (${sqlValue(now)} - deposited_at) / 1000.0)) WHERE withdrawn = FALSE`,
+      `UPDATE signals SET concentration = LEAST(concentration, GREATEST(0, 1.0 - (0.01 * (${sqlValue(now)} - deposited_at) / 1000.0))) WHERE withdrawn = FALSE`,
     );
     result.decayed = decayResult.affectedRows;
 
@@ -365,6 +373,18 @@ export class DoltEnvironment implements SerializableEnvironment {
       'SELECT * FROM signals WHERE withdrawn = FALSE ORDER BY concentration DESC',
     );
     return rows.map(rowToSignal);
+  }
+
+  // ----------------------------------------------------------
+  // Lifecycle
+  // ----------------------------------------------------------
+
+  /** Close the mysql2 connection pool (if active). Call on shutdown to prevent leaks. */
+  async close(): Promise<void> {
+    if (this.sqlClient) {
+      await this.sqlClient.close();
+      this.sqlClient = undefined;
+    }
   }
 
   // ----------------------------------------------------------
@@ -452,6 +472,16 @@ function rowToSignal(row: Record<string, unknown>): Signal {
       tags: (parseJSON(row.tags) as string[] | undefined) ?? undefined,
     },
   };
+}
+
+/**
+ * Coerce a limit value to a safe positive integer for SQL interpolation.
+ * Prevents SQL injection through unvalidated limit values.
+ */
+function sanitizeLimit(value: unknown): number {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return n;
 }
 
 function parseJSON(value: unknown): unknown {

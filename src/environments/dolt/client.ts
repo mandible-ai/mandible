@@ -240,7 +240,10 @@ export function escapeSQL(value: string): string {
   return value
     .replace(/\\/g, '\\\\')
     .replace(/'/g, "\\'")
-    .replace(/\0/g, '\\0');
+    .replace(/\0/g, '\\0')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\x1a/g, '\\Z');
 }
 
 /**
