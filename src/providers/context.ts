@@ -48,7 +48,9 @@ export async function assembleContext(
     const lineage = await walkLineage(
       signal,
       env,
-      config.lineageDepth ?? 3
+      config.lineageDepth ?? 3,
+      0,
+      new Set()
     );
     if (lineage.length > 0) {
       sections.push(
@@ -123,7 +125,8 @@ async function walkLineage(
   signal: Signal,
   env: Environment,
   maxDepth: number,
-  depth: number = 0
+  depth: number = 0,
+  visited: Set<string> = new Set()
 ): Promise<Signal[]> {
   if (depth >= maxDepth) return [];
   if (!signal.meta.caused_by?.length) return [];
@@ -131,6 +134,9 @@ async function walkLineage(
   const lineage: Signal[] = [];
 
   for (const parentId of signal.meta.caused_by) {
+    if (visited.has(parentId)) continue;
+    visited.add(parentId);
+
     // Look in active signals first, then history
     let parent = (await env.observe({ filter: s => s.id === parentId, limit: 1 }))[0];
     if (!parent) {
@@ -140,7 +146,7 @@ async function walkLineage(
     if (parent) {
       lineage.push(parent);
       // Recurse up the chain
-      const ancestors = await walkLineage(parent, env, maxDepth, depth + 1);
+      const ancestors = await walkLineage(parent, env, maxDepth, depth + 1, visited);
       lineage.push(...ancestors);
     }
   }
@@ -152,27 +158,31 @@ async function walkLineage(
 // Sibling discovery
 // ----------------------------------------------------------
 
+const SIBLING_LIMIT = 20;
+
 async function findSiblings(signal: Signal, env: Environment): Promise<Signal[]> {
   if (!signal.meta.caused_by?.length) return [];
 
-  // Find all signals that share the same parent(s)
-  const allSignals = await env.observe({});
-  const allHistory = await env.history({ includeWithdrawn: true });
-  const all = [...allSignals, ...allHistory];
-
   const parentIds = new Set(signal.meta.caused_by);
-
-  return all.filter(s =>
+  const isSibling = (s: Signal) =>
     s.id !== signal.id &&
-    s.meta.caused_by?.some(id => parentIds.has(id))
-  );
+    s.meta.caused_by?.some(id => parentIds.has(id)) === true;
+
+  return env.observe({ filter: isSibling, limit: SIBLING_LIMIT });
 }
 
 // ----------------------------------------------------------
 // Formatting helpers
 // ----------------------------------------------------------
 
+const MAX_PAYLOAD_LENGTH = 2000;
+
 function formatSignalSection(title: string, signal: Signal): string {
+  let payloadStr = JSON.stringify(signal.payload, null, 2);
+  if (payloadStr.length > MAX_PAYLOAD_LENGTH) {
+    payloadStr = payloadStr.slice(0, MAX_PAYLOAD_LENGTH) + '\n... (truncated)';
+  }
+
   return [
     `## ${title}`,
     `- **Type:** ${signal.type}`,
@@ -181,7 +191,7 @@ function formatSignalSection(title: string, signal: Signal): string {
     `- **Age:** ${formatAge(signal.meta.deposited_at)}`,
     `- **Concentration:** ${signal.meta.concentration.toFixed(2)}`,
     signal.meta.tags?.length ? `- **Tags:** ${signal.meta.tags.join(', ')}` : '',
-    `- **Payload:**\n\`\`\`json\n${JSON.stringify(signal.payload, null, 2)}\n\`\`\``,
+    `- **Payload:**\n\`\`\`json\n${payloadStr}\n\`\`\``,
   ].filter(Boolean).join('\n');
 }
 
