@@ -29,7 +29,8 @@ export interface OpenHandsConfig<T = Record<string, unknown>> {
   llmBaseUrl?: string;
 
   /**
-   * LLM API key. Default: 'not-needed' (for local vLLM).
+   * LLM API key. Only sent when provided.
+   * For local vLLM setups that don't require a key, omit this field.
    */
   llmApiKey?: string;
 
@@ -134,7 +135,7 @@ export function withOpenHands<T = Record<string, unknown>>(
     serverUrl = 'http://localhost:3001',
     model,
     llmBaseUrl,
-    llmApiKey = 'not-needed',
+    llmApiKey,
     prompt,
     workingDirectory,
     timeout = 900_000,
@@ -164,11 +165,11 @@ export function withOpenHands<T = Record<string, unknown>>(
 
     try {
       const createBody: Record<string, unknown> = {};
-      if (model) createBody.model = model;
-      if (llmBaseUrl) createBody.llm_base_url = llmBaseUrl;
-      if (llmApiKey) createBody.llm_api_key = llmApiKey;
-      if (maxIterations) createBody.max_iterations = maxIterations;
-      if (cwd) createBody.initial_cwd = cwd;
+      if (model !== undefined) createBody.model = model;
+      if (llmBaseUrl !== undefined) createBody.llm_base_url = llmBaseUrl;
+      if (llmApiKey !== undefined) createBody.llm_api_key = llmApiKey;
+      if (maxIterations !== undefined) createBody.max_iterations = maxIterations;
+      if (cwd !== undefined) createBody.initial_cwd = cwd;
 
       const createRes = await fetchWithTimeout(
         `${baseUrl}/api/conversations`,
@@ -202,7 +203,7 @@ export function withOpenHands<T = Record<string, unknown>>(
 
       // 4. Send prompt message
       const messageRes = await fetchWithTimeout(
-        `${baseUrl}/api/conversations/${conversationId}/messages`,
+        `${baseUrl}/api/conversations/${encodeURIComponent(conversationId)}/messages`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -300,13 +301,16 @@ async function waitForCompletion(
     while (Date.now() < deadline) {
       // Poll conversation status
       const statusRes = await fetchWithTimeout(
-        `${baseUrl}/api/conversations/${conversationId}`,
+        `${baseUrl}/api/conversations/${encodeURIComponent(conversationId)}`,
         { method: 'GET' },
         10_000
       ).catch(() => null);
 
       if (statusRes?.ok) {
-        const statusData = await statusRes.json().catch(() => ({}));
+        const statusData = await statusRes.json().catch((err) => {
+          ctx.log(`Warning: failed to parse poll response: ${err.message}`, 'warn');
+          return {};
+        });
         const state = statusData.status ?? statusData.state;
 
         if (state === 'finished' || state === 'completed' || state === 'done') {
@@ -351,7 +355,8 @@ function tryWebSocketStream(
 
   try {
     // Convert http(s) to ws(s) URL
-    const wsUrl = baseUrl.replace(/^http/, 'ws') + `/ws/${conversationId}`;
+    const wsUrl = baseUrl.replace(/^https?/, m => m === 'https' ? 'wss' : 'ws')
+      + `/ws/${encodeURIComponent(conversationId)}`;
 
     // Dynamic import WebSocket (Node.js built-in from v21+, or ws package)
     const WebSocketImpl = globalThis.WebSocket;
@@ -408,11 +413,14 @@ function extractFinalText(
 
 /** DELETE the conversation to free resources. */
 async function cleanupConversation(baseUrl: string, conversationId: string): Promise<void> {
-  await fetchWithTimeout(
-    `${baseUrl}/api/conversations/${conversationId}`,
+  const res = await fetchWithTimeout(
+    `${baseUrl}/api/conversations/${encodeURIComponent(conversationId)}`,
     { method: 'DELETE' },
     10_000
   );
+  if (!res.ok) {
+    throw new Error(`DELETE returned ${res.status}`);
+  }
 }
 
 /** fetch() with AbortSignal.timeout. */
@@ -463,9 +471,7 @@ function resolveOutput<T>(
 
 export type OpenHandsErrorCode =
   | 'CONVERSATION_CREATE_FAILED'
-  | 'MESSAGE_SEND_FAILED'
-  | 'CONNECTION_FAILED'
-  | 'TIMEOUT';
+  | 'MESSAGE_SEND_FAILED';
 
 export class OpenHandsError extends Error {
   constructor(

@@ -342,8 +342,13 @@ describe('withOpenHands', () => {
       output: { type: 'devops:fixed' },
     });
 
-    await expect(handler(makeSignal(), makeContext())).rejects.toThrow(OpenHandsError);
-    await expect(handler(makeSignal(), makeContext())).rejects.toThrow('Failed to create');
+    await expect(handler(makeSignal(), makeContext())).rejects.toThrow(
+      expect.objectContaining({
+        name: 'OpenHandsError',
+        code: 'CONVERSATION_CREATE_FAILED',
+        message: expect.stringContaining('Failed to create'),
+      })
+    );
   });
 
   it('throws OpenHandsError when no conversation ID returned', async () => {
@@ -438,5 +443,172 @@ describe('withOpenHands', () => {
 
     const createBody = JSON.parse(fetchCalls[0].init.body as string);
     expect(createBody.max_iterations).toBe(100);
+  });
+
+  // ── Config propagation edge cases ──────────────────────────
+
+  it('omits llmApiKey from create body when not provided', async () => {
+    setupSuccessFlow();
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      model: 'openai/qwen3-coder',
+      output: { type: 'devops:fixed' },
+    });
+
+    await handler(makeSignal(), makeContext());
+
+    const createBody = JSON.parse(fetchCalls[0].init.body as string);
+    expect(createBody.llm_api_key).toBeUndefined();
+  });
+
+  it('sends llmApiKey when explicitly provided', async () => {
+    setupSuccessFlow();
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      llmApiKey: 'sk-my-key',
+      output: { type: 'devops:fixed' },
+    });
+
+    await handler(makeSignal(), makeContext());
+
+    const createBody = JSON.parse(fetchCalls[0].init.body as string);
+    expect(createBody.llm_api_key).toBe('sk-my-key');
+  });
+
+  // ── Timeout behavior ───────────────────────────────────────
+
+  it('returns timeout status when poll never resolves', async () => {
+    vi.useFakeTimers();
+
+    // Create conversation
+    mockFetchResponse({ conversation_id: 'conv_timeout' });
+    // Send message
+    mockFetchResponse({ status: 'ok' });
+    // Poll status — always running (supply enough for multiple polls)
+    for (let i = 0; i < 10; i++) {
+      mockFetchResponse({ status: 'running' });
+    }
+    // DELETE cleanup
+    mockFetchResponse({}, true, 204);
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      timeout: 8_000, // Short enough for test, longer than one poll cycle
+      output: (result: OpenHandsResult) => ({
+        type: result.status === 'timeout' ? 'devops:timeout' : 'devops:done',
+        payload: { status: result.status },
+      }),
+    });
+    const ctx = makeContext();
+
+    // Start handler but don't await yet — it will be waiting on sleep()
+    const promise = handler(makeSignal(), ctx);
+
+    // Advance timers past the timeout deadline (poll interval is 5s, timeout is 8s)
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    await promise;
+
+    expect(ctx.deposits[0].type).toBe('devops:timeout');
+    expect(ctx.deposits[0].payload.status).toBe('timeout');
+
+    vi.useRealTimers();
+  });
+
+  // ── Array output mapping ───────────────────────────────────
+
+  it('deposits multiple signals from array output mapping', async () => {
+    setupSuccessFlow();
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: (result: OpenHandsResult, signal) => [
+        { type: 'devops:fixed', payload: { summary: result.text } },
+        { type: 'audit:action', payload: { action: 'ci-fix', signal: signal.id }, tags: ['audit'] },
+      ],
+    });
+    const ctx = makeContext();
+
+    await handler(makeSignal(), ctx);
+
+    expect(ctx.deposits.length).toBe(2);
+    expect(ctx.deposits[0].type).toBe('devops:fixed');
+    expect(ctx.deposits[1].type).toBe('audit:action');
+    expect(ctx.deposits[1].options.tags).toEqual(['audit']);
+  });
+
+  // ── Cleanup failure logging ────────────────────────────────
+
+  it('logs warning when DELETE cleanup fails', async () => {
+    // Create conversation
+    mockFetchResponse({ conversation_id: 'conv_del_fail' });
+    // Send message
+    mockFetchResponse({ status: 'ok' });
+    // Poll status — finished
+    mockFetchResponse({ status: 'finished', summary: 'Done' });
+    // DELETE cleanup — fails
+    mockFetchResponse({ error: 'internal error' }, false, 500);
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
+    });
+    const ctx = makeContext();
+
+    await handler(makeSignal(), ctx);
+
+    const warnings = ctx.logs.filter(l => l.level === 'warn');
+    expect(warnings.some(w => w.message.includes('conv_del_fail'))).toBe(true);
+  });
+
+  // ── Message send failure ───────────────────────────────────
+
+  it('throws OpenHandsError on message send failure', async () => {
+    // Create conversation succeeds
+    mockFetchResponse({ conversation_id: 'conv_msg_fail' });
+    // Send message fails
+    mockFetchResponse({ error: 'bad request' }, false, 400);
+    // DELETE cleanup
+    mockFetchResponse({}, true, 204);
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
+    });
+
+    await expect(handler(makeSignal(), makeContext())).rejects.toThrow(
+      expect.objectContaining({
+        name: 'OpenHandsError',
+        code: 'MESSAGE_SEND_FAILED',
+      })
+    );
+  });
+
+  // ── Stopped state ──────────────────────────────────────────
+
+  it('handles stopped state from status poll', async () => {
+    // Create conversation
+    mockFetchResponse({ conversation_id: 'conv_stop' });
+    // Send message
+    mockFetchResponse({ status: 'ok' });
+    // Poll status — stopped
+    mockFetchResponse({ status: 'stopped' });
+    // DELETE cleanup
+    mockFetchResponse({}, true, 204);
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: (result: OpenHandsResult) => ({
+        type: `devops:${result.status}`,
+        payload: { text: result.text },
+      }),
+    });
+    const ctx = makeContext();
+
+    await handler(makeSignal(), ctx);
+
+    expect(ctx.deposits[0].type).toBe('devops:stopped');
   });
 });
