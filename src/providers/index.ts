@@ -41,6 +41,10 @@ export type { QwenCodeConfig, QwenCodeResult } from './qwen-code.js';
 export { withOpenCode } from './opencode.js';
 export type { OpenCodeConfig, OpenCodeResult } from './opencode.js';
 
+// OpenHands agent wrapper (sandboxed agentic coding for CI/DevOps)
+export { withOpenHands, OpenHandsError } from './openhands.js';
+export type { OpenHandsConfig, OpenHandsResult, OpenHandsEvent, OpenHandsErrorCode } from './openhands.js';
+
 // Skill-based colony provider
 export { withSkill, loadSkills, loadSkill, parseFrontmatter } from './skill.js';
 export type { SkillConfig, Skill, SkillMeta } from './skill.js';

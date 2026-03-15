@@ -131,6 +131,7 @@ export { withStructuredOutput } from './providers/structured-output.js';
 export { withLLM } from './providers/llm.js';
 export { withBash } from './providers/bash.js';
 export { withOpenCode } from './providers/opencode.js';
+export { withOpenHands, OpenHandsError } from './providers/openhands.js';
 export { assembleContext, withContext } from './providers/context.js';
 
 export type {
@@ -148,3 +149,4 @@ export type {
 } from './providers/types.js';
 
 export type { OpenCodeConfig, OpenCodeResult } from './providers/opencode.js';
+export type { OpenHandsConfig, OpenHandsResult, OpenHandsEvent, OpenHandsErrorCode } from './providers/openhands.js';
