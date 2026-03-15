@@ -1,5 +1,5 @@
-// PURPOSE: Tests for the withOpenHands provider (OpenHands agent server integration)
-// PURPOSE: Covers REST lifecycle, prompt resolution, output mapping, error handling, timeout
+// PURPOSE: Tests for the withOpenHands provider (OpenHands V1 API)
+// PURPOSE: Covers V1 REST lifecycle, startup polling, completion polling, error handling, status mapping
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Signal, ActionContext } from '../../src/core/types.js';
@@ -9,15 +9,24 @@ import type { OpenHandsResult, OpenHandsEvent } from '../../src/providers/openha
 // ── Mock fetch ──────────────────────────────────────────────
 
 let fetchCalls: Array<{ url: string; init: RequestInit }> = [];
-let fetchResponses: Array<{ ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }> = [];
+let fetchHandlers: Array<(url: string, init: RequestInit) => { ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }> = [];
 
-function mockFetchResponse(data: any, ok = true, status = 200) {
-  fetchResponses.push({
+function pushHandler(handler: (url: string, init: RequestInit) => { ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }) {
+  fetchHandlers.push(handler);
+}
+
+function mockResponse(data: any, ok = true, status = 200) {
+  return {
     ok,
     status,
     json: async () => data,
     text: async () => JSON.stringify(data),
-  });
+  };
+}
+
+/** Queue a simple response that will be consumed by the next matching fetch. */
+function queueResponse(data: any, ok = true, status = 200) {
+  pushHandler(() => mockResponse(data, ok, status));
 }
 
 /** A minimal mock signal */
@@ -76,16 +85,15 @@ const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
   fetchCalls = [];
-  fetchResponses = [];
+  fetchHandlers = [];
 
-  // Mock global fetch
   globalThis.fetch = vi.fn(async (url: any, init: any) => {
     fetchCalls.push({ url: url.toString(), init });
-    const response = fetchResponses.shift();
-    if (!response) {
+    const handler = fetchHandlers.shift();
+    if (!handler) {
       return { ok: false, status: 500, json: async () => ({}), text: async () => 'no mock response' };
     }
-    return response;
+    return handler(url.toString(), init);
   }) as any;
 });
 
@@ -94,70 +102,351 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// ── Helpers ─────────────────────────────────────────────────
+
+/** Set up the standard V1 success flow: create → startup READY → execution FINISHED */
+function setupV1SuccessFlow(conversationId = 'conv_001', lastMessage = 'Fixed the CI failure by updating deps.') {
+  // 1. Create conversation (POST /api/v1/app-conversations)
+  queueResponse({ conversation_id: conversationId });
+  // 2. Start-task poll → READY (GET /api/v1/app-conversations/start-tasks)
+  queueResponse({ tasks: [{ conversation_id: conversationId, status: 'READY' }] });
+  // 3. Completion poll → FINISHED (GET /api/v1/app-conversations)
+  queueResponse({ conversations: [{ conversation_id: conversationId, execution_status: 'FINISHED', sandbox_status: 'RUNNING', last_message: lastMessage }] });
+}
+
 // ── Tests ───────────────────────────────────────────────────
 
 describe('withOpenHands', () => {
 
-  // Helper: set up standard successful flow
-  function setupSuccessFlow(conversationId = 'conv_001') {
-    // 1. Create conversation
-    mockFetchResponse({ conversation_id: conversationId });
-    // 2. Send message
-    mockFetchResponse({ status: 'ok' });
-    // 3. Poll status — finished
-    mockFetchResponse({ status: 'finished', summary: 'Fixed the CI failure by updating deps.' });
-    // 4. DELETE cleanup
-    mockFetchResponse({}, true, 204);
-  }
+  // ── 1. Happy path ─────────────────────────────────────────
 
-  // ── Core lifecycle ────────────────────────────────────────
-
-  it('creates conversation with correct serverUrl', async () => {
-    setupSuccessFlow();
-
-    const handler = withOpenHands({
-      serverUrl: 'http://my-openhands:3001',
-      prompt: 'Fix the CI',
-      output: { type: 'devops:fixed' },
-    });
-
-    await handler(makeSignal(), makeContext());
-
-    expect(fetchCalls[0].url).toBe('http://my-openhands:3001/api/conversations');
-  });
-
-  it('uses default serverUrl when not specified', async () => {
-    setupSuccessFlow();
+  it('happy path: create → startup READY → execution FINISHED', async () => {
+    setupV1SuccessFlow();
 
     const handler = withOpenHands({
       prompt: 'Fix the CI',
       output: { type: 'devops:fixed' },
     });
+    const ctx = makeContext();
+
+    await handler(makeSignal(), ctx);
+
+    expect(ctx.deposits.length).toBe(1);
+    expect(ctx.deposits[0].type).toBe('devops:fixed');
+    expect(ctx.deposits[0].payload.status).toBe('finished');
+    expect(ctx.deposits[0].payload.text).toBe('Fixed the CI failure by updating deps.');
+    expect(ctx.withdrawals).toEqual(['sig_test_001']);
+  });
+
+  // ── 2. Startup polling progression ─────────────────────────
+
+  it('startup polling: QUEUED → RUNNING → READY progression', async () => {
+    // Create
+    queueResponse({ conversation_id: 'conv_startup' });
+    // Start-task poll 1: QUEUED
+    queueResponse({ tasks: [{ conversation_id: 'conv_startup', status: 'QUEUED' }] });
+    // Start-task poll 2: RUNNING
+    queueResponse({ tasks: [{ conversation_id: 'conv_startup', status: 'RUNNING' }] });
+    // Start-task poll 3: READY
+    queueResponse({ tasks: [{ conversation_id: 'conv_startup', status: 'READY' }] });
+    // Completion poll → FINISHED
+    queueResponse({ conversations: [{ conversation_id: 'conv_startup', execution_status: 'FINISHED', sandbox_status: 'RUNNING', last_message: 'Done' }] });
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
+    });
+    const ctx = makeContext();
+
+    await handler(makeSignal(), ctx);
+
+    expect(ctx.deposits[0].payload.status).toBe('finished');
+    // Verify start-tasks was called multiple times
+    const startTaskCalls = fetchCalls.filter(c => c.url.includes('start-tasks'));
+    expect(startTaskCalls.length).toBe(3);
+  });
+
+  // ── 3. Startup timeout ────────────────────────────────────
+
+  it('startup timeout: never reaches READY', async () => {
+    vi.useFakeTimers();
+
+    // Create
+    queueResponse({ conversation_id: 'conv_st_timeout' });
+    // Start-task polls: always QUEUED (supply plenty)
+    for (let i = 0; i < 40; i++) {
+      queueResponse({ tasks: [{ conversation_id: 'conv_st_timeout', status: 'QUEUED' }] });
+    }
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
+    });
+
+    let caughtError: Error | undefined;
+    const promise = handler(makeSignal(), makeContext()).catch((err) => {
+      caughtError = err;
+    });
+
+    // Advance past 60s startup timeout
+    await vi.advanceTimersByTimeAsync(70_000);
+
+    await promise;
+
+    expect(caughtError).toBeDefined();
+    expect(caughtError!.name).toBe('OpenHandsError');
+    expect((caughtError as any).code).toBe('STARTUP_TIMEOUT');
+
+    vi.useRealTimers();
+  });
+
+  // ── 4. Startup error ──────────────────────────────────────
+
+  it('startup error: start-task returns ERROR', async () => {
+    // Create
+    queueResponse({ conversation_id: 'conv_st_err' });
+    // Start-task → ERROR
+    queueResponse({ tasks: [{ conversation_id: 'conv_st_err', status: 'ERROR' }] });
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
+    });
+
+    await expect(handler(makeSignal(), makeContext())).rejects.toThrow(
+      expect.objectContaining({
+        name: 'OpenHandsError',
+        code: 'STARTUP_FAILED',
+      })
+    );
+  });
+
+  // ── 5. Execution error ────────────────────────────────────
+
+  it('execution error: execution_status ERROR', async () => {
+    // Create
+    queueResponse({ conversation_id: 'conv_exec_err' });
+    // Startup → READY
+    queueResponse({ tasks: [{ conversation_id: 'conv_exec_err', status: 'READY' }] });
+    // Completion → ERROR
+    queueResponse({ conversations: [{ conversation_id: 'conv_exec_err', execution_status: 'ERROR', sandbox_status: 'RUNNING', last_message: 'Agent crashed' }] });
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: (result: OpenHandsResult) => ({
+        type: result.status === 'finished' ? 'devops:fixed' : 'devops:error',
+        payload: { status: result.status, text: result.text },
+      }),
+    });
+    const ctx = makeContext();
+
+    await handler(makeSignal(), ctx);
+
+    expect(ctx.deposits[0].type).toBe('devops:error');
+    expect(ctx.deposits[0].payload.status).toBe('error');
+    expect(ctx.deposits[0].payload.text).toBe('Agent crashed');
+  });
+
+  // ── 6. Execution stuck ────────────────────────────────────
+
+  it('execution stuck: execution_status STUCK', async () => {
+    // Create
+    queueResponse({ conversation_id: 'conv_stuck' });
+    // Startup → READY
+    queueResponse({ tasks: [{ conversation_id: 'conv_stuck', status: 'READY' }] });
+    // Completion → STUCK
+    queueResponse({ conversations: [{ conversation_id: 'conv_stuck', execution_status: 'STUCK', sandbox_status: 'RUNNING', last_message: 'Cannot proceed' }] });
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: (result: OpenHandsResult) => ({
+        type: `devops:${result.status}`,
+        payload: { text: result.text },
+      }),
+    });
+    const ctx = makeContext();
+
+    await handler(makeSignal(), ctx);
+
+    expect(ctx.deposits[0].type).toBe('devops:stuck');
+    expect(ctx.deposits[0].payload.text).toBe('Cannot proceed');
+  });
+
+  // ── 7. Sandbox error ──────────────────────────────────────
+
+  it('sandbox error: sandbox_status ERROR', async () => {
+    // Create
+    queueResponse({ conversation_id: 'conv_sandbox_err' });
+    // Startup → READY
+    queueResponse({ tasks: [{ conversation_id: 'conv_sandbox_err', status: 'READY' }] });
+    // Completion → sandbox ERROR
+    queueResponse({ conversations: [{ conversation_id: 'conv_sandbox_err', execution_status: 'RUNNING', sandbox_status: 'ERROR', last_message: 'Sandbox crashed' }] });
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: (result: OpenHandsResult) => ({
+        type: `devops:${result.status}`,
+        payload: { text: result.text },
+      }),
+    });
+    const ctx = makeContext();
+
+    await handler(makeSignal(), ctx);
+
+    expect(ctx.deposits[0].type).toBe('devops:error');
+    expect(ctx.deposits[0].payload.text).toBe('Sandbox crashed');
+  });
+
+  // ── 8. Stopped state ──────────────────────────────────────
+
+  it('stopped state: PAUSED + STOPPED', async () => {
+    // Create
+    queueResponse({ conversation_id: 'conv_stop' });
+    // Startup → READY
+    queueResponse({ tasks: [{ conversation_id: 'conv_stop', status: 'READY' }] });
+    // Completion → PAUSED + STOPPED
+    queueResponse({ conversations: [{ conversation_id: 'conv_stop', execution_status: 'PAUSED', sandbox_status: 'STOPPED' }] });
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: (result: OpenHandsResult) => ({
+        type: `devops:${result.status}`,
+        payload: { text: result.text },
+      }),
+    });
+    const ctx = makeContext();
+
+    await handler(makeSignal(), ctx);
+
+    expect(ctx.deposits[0].type).toBe('devops:stopped');
+  });
+
+  // ── 9. Timeout: execution never finishes ──────────────────
+
+  it('timeout: execution never finishes', async () => {
+    vi.useFakeTimers();
+
+    // Create
+    queueResponse({ conversation_id: 'conv_timeout' });
+    // Startup → READY
+    queueResponse({ tasks: [{ conversation_id: 'conv_timeout', status: 'READY' }] });
+    // Completion polls — always RUNNING (supply many)
+    for (let i = 0; i < 20; i++) {
+      queueResponse({ conversations: [{ conversation_id: 'conv_timeout', execution_status: 'RUNNING', sandbox_status: 'RUNNING' }] });
+    }
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      timeout: 8_000,
+      output: (result: OpenHandsResult) => ({
+        type: result.status === 'timeout' ? 'devops:timeout' : 'devops:done',
+        payload: { status: result.status },
+      }),
+    });
+    const ctx = makeContext();
+
+    const promise = handler(makeSignal(), ctx);
+
+    await vi.advanceTimersByTimeAsync(70_000);
+
+    await promise;
+
+    expect(ctx.deposits[0].type).toBe('devops:timeout');
+    expect(ctx.deposits[0].payload.status).toBe('timeout');
+
+    vi.useRealTimers();
+  });
+
+  // ── 10. Auth header ───────────────────────────────────────
+
+  it('includes Authorization header when apiKey is set', async () => {
+    setupV1SuccessFlow();
+
+    const handler = withOpenHands({
+      apiKey: 'my-secret-key',
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
+    });
 
     await handler(makeSignal(), makeContext());
 
-    expect(fetchCalls[0].url).toBe('http://localhost:3001/api/conversations');
+    // All fetch calls should include the auth header
+    for (const call of fetchCalls) {
+      const authHeader = (call.init.headers as Record<string, string>)['Authorization'];
+      expect(authHeader).toBe('Bearer my-secret-key');
+    }
   });
 
-  it('sends model and llmBaseUrl in create body', async () => {
-    setupSuccessFlow();
+  it('omits Authorization header when apiKey is not set', async () => {
+    setupV1SuccessFlow();
 
     const handler = withOpenHands({
-      model: 'openai/qwen3-coder',
-      llmBaseUrl: 'http://dgx-inference:8000/v1',
-      prompt: 'Fix the CI',
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
+    });
+
+    await handler(makeSignal(), makeContext());
+
+    for (const call of fetchCalls) {
+      const authHeader = (call.init.headers as Record<string, string>)['Authorization'];
+      expect(authHeader).toBeUndefined();
+    }
+  });
+
+  // ── 11. Repository ────────────────────────────────────────
+
+  it('sends static repository in create body', async () => {
+    setupV1SuccessFlow();
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      repository: 'https://github.com/my-org/my-repo',
       output: { type: 'devops:fixed' },
     });
 
     await handler(makeSignal(), makeContext());
 
     const createBody = JSON.parse(fetchCalls[0].init.body as string);
-    expect(createBody.model).toBe('openai/qwen3-coder');
-    expect(createBody.llm_base_url).toBe('http://dgx-inference:8000/v1');
+    expect(createBody.repository).toBe('https://github.com/my-org/my-repo');
   });
 
-  it('sends resolved prompt as user message', async () => {
-    setupSuccessFlow();
+  it('resolves repository from signal function', async () => {
+    setupV1SuccessFlow();
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      repository: (signal) => `https://github.com/org/${(signal.payload as any).repo ?? 'default'}`,
+      output: { type: 'devops:fixed' },
+    });
+
+    const signal = makeSignal({ payload: { repo: 'my-app', logs: 'fail' } });
+    await handler(signal, makeContext());
+
+    const createBody = JSON.parse(fetchCalls[0].init.body as string);
+    expect(createBody.repository).toBe('https://github.com/org/my-app');
+  });
+
+  // ── 12. Dynamic prompt resolution ─────────────────────────
+
+  it('resolves async prompt function', async () => {
+    setupV1SuccessFlow();
+
+    const handler = withOpenHands({
+      prompt: async (signal) => {
+        return `Context: ...\n\nFix: ${(signal.payload as any).logs}`;
+      },
+      output: { type: 'devops:fixed' },
+    });
+
+    await handler(makeSignal(), makeContext());
+
+    const createBody = JSON.parse(fetchCalls[0].init.body as string);
+    expect(createBody.initial_message).toContain('Context: ...');
+    expect(createBody.initial_message).toContain('Build failed: test suite error');
+  });
+
+  it('sends static prompt as initial_message', async () => {
+    setupV1SuccessFlow();
 
     const handler = withOpenHands({
       prompt: 'Investigate failure in test suite',
@@ -166,49 +455,14 @@ describe('withOpenHands', () => {
 
     await handler(makeSignal(), makeContext());
 
-    // Second fetch call is the message send
-    const messageBody = JSON.parse(fetchCalls[1].init.body as string);
-    expect(messageBody.role).toBe('user');
-    expect(messageBody.content).toBe('Investigate failure in test suite');
+    const createBody = JSON.parse(fetchCalls[0].init.body as string);
+    expect(createBody.initial_message).toBe('Investigate failure in test suite');
   });
 
-  // ── Prompt resolution ─────────────────────────────────────
-
-  it('resolves prompt from function', async () => {
-    setupSuccessFlow();
-
-    const handler = withOpenHands({
-      prompt: (signal) => `Fix PR #${(signal.payload as any).prNumber}: ${(signal.payload as any).logs}`,
-      output: { type: 'devops:fixed' },
-    });
-
-    await handler(makeSignal(), makeContext());
-
-    const messageBody = JSON.parse(fetchCalls[1].init.body as string);
-    expect(messageBody.content).toBe('Fix PR #42: Build failed: test suite error');
-  });
-
-  it('resolves async prompt function', async () => {
-    setupSuccessFlow();
-
-    const handler = withOpenHands({
-      prompt: async (signal) => {
-        // Simulates calling assembleContext in a closure
-        return `Context: ...\n\nFix: ${(signal.payload as any).logs}`;
-      },
-      output: { type: 'devops:fixed' },
-    });
-
-    await handler(makeSignal(), makeContext());
-
-    const messageBody = JSON.parse(fetchCalls[1].init.body as string);
-    expect(messageBody.content).toContain('Context: ...');
-  });
-
-  // ── Output mapping ────────────────────────────────────────
+  // ── 13. Output mapping ────────────────────────────────────
 
   it('deposits default signal type when no output mapping', async () => {
-    setupSuccessFlow();
+    setupV1SuccessFlow();
 
     const handler = withOpenHands({ prompt: 'Fix it' });
     const ctx = makeContext();
@@ -221,7 +475,7 @@ describe('withOpenHands', () => {
   });
 
   it('deposits static output type', async () => {
-    setupSuccessFlow();
+    setupV1SuccessFlow();
 
     const handler = withOpenHands({
       prompt: 'Fix it',
@@ -236,7 +490,7 @@ describe('withOpenHands', () => {
   });
 
   it('deposits via function output mapping', async () => {
-    setupSuccessFlow();
+    setupV1SuccessFlow();
 
     const handler = withOpenHands({
       prompt: 'Fix it',
@@ -254,273 +508,8 @@ describe('withOpenHands', () => {
     expect(ctx.deposits[0].payload.prNumber).toBe(42);
   });
 
-  it('sets causedBy in deposited signals', async () => {
-    setupSuccessFlow();
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      output: { type: 'devops:fixed' },
-    });
-    const ctx = makeContext();
-
-    await handler(makeSignal(), ctx);
-
-    expect(ctx.deposits[0].options.causedBy).toEqual(['sig_test_001']);
-  });
-
-  // ── Auto-withdraw ─────────────────────────────────────────
-
-  it('auto-withdraws triggering signal by default', async () => {
-    setupSuccessFlow();
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      output: { type: 'devops:fixed' },
-    });
-    const ctx = makeContext();
-
-    await handler(makeSignal(), ctx);
-
-    expect(ctx.withdrawals).toEqual(['sig_test_001']);
-  });
-
-  it('skips auto-withdraw when disabled', async () => {
-    setupSuccessFlow();
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      output: { type: 'devops:fixed' },
-      autoWithdraw: false,
-    });
-    const ctx = makeContext();
-
-    await handler(makeSignal(), ctx);
-
-    expect(ctx.withdrawals).toEqual([]);
-  });
-
-  // ── Working directory ─────────────────────────────────────
-
-  it('sends working directory in create body', async () => {
-    setupSuccessFlow();
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      workingDirectory: '/opt/workspace/my-repo',
-      output: { type: 'devops:fixed' },
-    });
-
-    await handler(makeSignal(), makeContext());
-
-    const createBody = JSON.parse(fetchCalls[0].init.body as string);
-    expect(createBody.initial_cwd).toBe('/opt/workspace/my-repo');
-  });
-
-  it('resolves working directory from signal', async () => {
-    setupSuccessFlow();
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      workingDirectory: (signal) => `/opt/workspace/${(signal.payload as any).repo ?? 'default'}`,
-      output: { type: 'devops:fixed' },
-    });
-
-    const signal = makeSignal({ payload: { repo: 'my-app', logs: 'fail' } });
-    await handler(signal, makeContext());
-
-    const createBody = JSON.parse(fetchCalls[0].init.body as string);
-    expect(createBody.initial_cwd).toBe('/opt/workspace/my-app');
-  });
-
-  // ── Error handling ────────────────────────────────────────
-
-  it('throws OpenHandsError on conversation create failure', async () => {
-    mockFetchResponse({ error: 'server down' }, false, 503);
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      output: { type: 'devops:fixed' },
-    });
-
-    await expect(handler(makeSignal(), makeContext())).rejects.toThrow(
-      expect.objectContaining({
-        name: 'OpenHandsError',
-        code: 'CONVERSATION_CREATE_FAILED',
-        message: expect.stringContaining('Failed to create'),
-      })
-    );
-  });
-
-  it('throws OpenHandsError when no conversation ID returned', async () => {
-    mockFetchResponse({}, true, 200); // No conversation_id field
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      output: { type: 'devops:fixed' },
-    });
-
-    await expect(handler(makeSignal(), makeContext())).rejects.toThrow('no conversation ID');
-  });
-
-  it('handles error state from status poll', async () => {
-    // Create conversation
-    mockFetchResponse({ conversation_id: 'conv_err' });
-    // Send message
-    mockFetchResponse({ status: 'ok' });
-    // Poll status — error
-    mockFetchResponse({ status: 'error', summary: 'Agent crashed' });
-    // DELETE cleanup
-    mockFetchResponse({}, true, 204);
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      output: (result: OpenHandsResult) => ({
-        type: result.status === 'finished' ? 'devops:fixed' : 'devops:error',
-        payload: { status: result.status, text: result.text },
-      }),
-    });
-    const ctx = makeContext();
-
-    await handler(makeSignal(), ctx);
-
-    expect(ctx.deposits[0].type).toBe('devops:error');
-    expect(ctx.deposits[0].payload.status).toBe('error');
-  });
-
-  // ── Cleanup ───────────────────────────────────────────────
-
-  it('cleans up conversation even on error', async () => {
-    // Create conversation succeeds
-    mockFetchResponse({ conversation_id: 'conv_cleanup' });
-    // Send message fails
-    mockFetchResponse({ error: 'bad request' }, false, 400);
-    // DELETE cleanup
-    mockFetchResponse({}, true, 204);
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      output: { type: 'devops:fixed' },
-    });
-
-    await expect(handler(makeSignal(), makeContext())).rejects.toThrow();
-
-    // The last fetch call should be DELETE for cleanup
-    const deleteCalls = fetchCalls.filter(c => c.init.method === 'DELETE');
-    expect(deleteCalls.length).toBe(1);
-    expect(deleteCalls[0].url).toContain('conv_cleanup');
-  });
-
-  // ── Logging ───────────────────────────────────────────────
-
-  it('logs conversation creation and completion', async () => {
-    setupSuccessFlow('conv_log');
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      output: { type: 'devops:fixed' },
-    });
-    const ctx = makeContext();
-
-    await handler(makeSignal(), ctx);
-
-    const logMessages = ctx.logs.map(l => l.message);
-    expect(logMessages.some(m => m.includes('conv_log') && m.includes('created'))).toBe(true);
-    expect(logMessages.some(m => m.includes('finished'))).toBe(true);
-  });
-
-  // ── Max iterations ────────────────────────────────────────
-
-  it('sends maxIterations in create body', async () => {
-    setupSuccessFlow();
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      maxIterations: 100,
-      output: { type: 'devops:fixed' },
-    });
-
-    await handler(makeSignal(), makeContext());
-
-    const createBody = JSON.parse(fetchCalls[0].init.body as string);
-    expect(createBody.max_iterations).toBe(100);
-  });
-
-  // ── Config propagation edge cases ──────────────────────────
-
-  it('omits llmApiKey from create body when not provided', async () => {
-    setupSuccessFlow();
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      model: 'openai/qwen3-coder',
-      output: { type: 'devops:fixed' },
-    });
-
-    await handler(makeSignal(), makeContext());
-
-    const createBody = JSON.parse(fetchCalls[0].init.body as string);
-    expect(createBody.llm_api_key).toBeUndefined();
-  });
-
-  it('sends llmApiKey when explicitly provided', async () => {
-    setupSuccessFlow();
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      llmApiKey: 'sk-my-key',
-      output: { type: 'devops:fixed' },
-    });
-
-    await handler(makeSignal(), makeContext());
-
-    const createBody = JSON.parse(fetchCalls[0].init.body as string);
-    expect(createBody.llm_api_key).toBe('sk-my-key');
-  });
-
-  // ── Timeout behavior ───────────────────────────────────────
-
-  it('returns timeout status when poll never resolves', async () => {
-    vi.useFakeTimers();
-
-    // Create conversation
-    mockFetchResponse({ conversation_id: 'conv_timeout' });
-    // Send message
-    mockFetchResponse({ status: 'ok' });
-    // Poll status — always running (supply enough for multiple polls)
-    for (let i = 0; i < 10; i++) {
-      mockFetchResponse({ status: 'running' });
-    }
-    // DELETE cleanup
-    mockFetchResponse({}, true, 204);
-
-    const handler = withOpenHands({
-      prompt: 'Fix it',
-      timeout: 8_000, // Short enough for test, longer than one poll cycle
-      output: (result: OpenHandsResult) => ({
-        type: result.status === 'timeout' ? 'devops:timeout' : 'devops:done',
-        payload: { status: result.status },
-      }),
-    });
-    const ctx = makeContext();
-
-    // Start handler but don't await yet — it will be waiting on sleep()
-    const promise = handler(makeSignal(), ctx);
-
-    // Advance timers past the timeout deadline (poll interval is 5s, timeout is 8s)
-    await vi.advanceTimersByTimeAsync(15_000);
-
-    await promise;
-
-    expect(ctx.deposits[0].type).toBe('devops:timeout');
-    expect(ctx.deposits[0].payload.status).toBe('timeout');
-
-    vi.useRealTimers();
-  });
-
-  // ── Array output mapping ───────────────────────────────────
-
   it('deposits multiple signals from array output mapping', async () => {
-    setupSuccessFlow();
+    setupV1SuccessFlow();
 
     const handler = withOpenHands({
       prompt: 'Fix it',
@@ -539,17 +528,10 @@ describe('withOpenHands', () => {
     expect(ctx.deposits[1].options.tags).toEqual(['audit']);
   });
 
-  // ── Cleanup failure logging ────────────────────────────────
+  // ── 14. Auto-withdraw ─────────────────────────────────────
 
-  it('logs warning when DELETE cleanup fails', async () => {
-    // Create conversation
-    mockFetchResponse({ conversation_id: 'conv_del_fail' });
-    // Send message
-    mockFetchResponse({ status: 'ok' });
-    // Poll status — finished
-    mockFetchResponse({ status: 'finished', summary: 'Done' });
-    // DELETE cleanup — fails
-    mockFetchResponse({ error: 'internal error' }, false, 500);
+  it('auto-withdraws triggering signal by default', async () => {
+    setupV1SuccessFlow();
 
     const handler = withOpenHands({
       prompt: 'Fix it',
@@ -559,19 +541,64 @@ describe('withOpenHands', () => {
 
     await handler(makeSignal(), ctx);
 
-    const warnings = ctx.logs.filter(l => l.level === 'warn');
-    expect(warnings.some(w => w.message.includes('conv_del_fail'))).toBe(true);
+    expect(ctx.withdrawals).toEqual(['sig_test_001']);
   });
 
-  // ── Message send failure ───────────────────────────────────
+  it('skips auto-withdraw when disabled', async () => {
+    setupV1SuccessFlow();
 
-  it('throws OpenHandsError on message send failure', async () => {
-    // Create conversation succeeds
-    mockFetchResponse({ conversation_id: 'conv_msg_fail' });
-    // Send message fails
-    mockFetchResponse({ error: 'bad request' }, false, 400);
-    // DELETE cleanup
-    mockFetchResponse({}, true, 204);
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
+      autoWithdraw: false,
+    });
+    const ctx = makeContext();
+
+    await handler(makeSignal(), ctx);
+
+    expect(ctx.withdrawals).toEqual([]);
+  });
+
+  // ── 15. onEvent callback ──────────────────────────────────
+
+  it('onEvent callback receives synthetic events on status changes', async () => {
+    vi.useFakeTimers();
+
+    // Create
+    queueResponse({ conversation_id: 'conv_events' });
+    // Startup → READY
+    queueResponse({ tasks: [{ conversation_id: 'conv_events', status: 'READY' }] });
+    // Completion poll 1 → RUNNING
+    queueResponse({ conversations: [{ conversation_id: 'conv_events', execution_status: 'RUNNING', sandbox_status: 'RUNNING' }] });
+    // Completion poll 2 → FINISHED
+    queueResponse({ conversations: [{ conversation_id: 'conv_events', execution_status: 'FINISHED', sandbox_status: 'RUNNING', last_message: 'Done' }] });
+
+    const receivedEvents: OpenHandsEvent[] = [];
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
+      onEvent: (event) => receivedEvents.push(event),
+    });
+    const ctx = makeContext();
+
+    const promise = handler(makeSignal(), ctx);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    await promise;
+
+    // Should have received at least 2 events (RUNNING→FINISHED status changes)
+    expect(receivedEvents.length).toBeGreaterThanOrEqual(2);
+    expect(receivedEvents[0].observation).toBe('status_change');
+    expect(receivedEvents[0].message).toContain('RUNNING');
+
+    vi.useRealTimers();
+  });
+
+  // ── 16. Create conversation failure ───────────────────────
+
+  it('throws OpenHandsError on conversation create failure', async () => {
+    queueResponse({ error: 'server down' }, false, 503);
 
     const handler = withOpenHands({
       prompt: 'Fix it',
@@ -581,34 +608,131 @@ describe('withOpenHands', () => {
     await expect(handler(makeSignal(), makeContext())).rejects.toThrow(
       expect.objectContaining({
         name: 'OpenHandsError',
-        code: 'MESSAGE_SEND_FAILED',
+        code: 'CONVERSATION_CREATE_FAILED',
+        message: expect.stringContaining('Failed to create'),
       })
     );
   });
 
-  // ── Stopped state ──────────────────────────────────────────
-
-  it('handles stopped state from status poll', async () => {
-    // Create conversation
-    mockFetchResponse({ conversation_id: 'conv_stop' });
-    // Send message
-    mockFetchResponse({ status: 'ok' });
-    // Poll status — stopped
-    mockFetchResponse({ status: 'stopped' });
-    // DELETE cleanup
-    mockFetchResponse({}, true, 204);
+  it('throws OpenHandsError when no conversation ID returned', async () => {
+    queueResponse({}, true, 200);
 
     const handler = withOpenHands({
       prompt: 'Fix it',
-      output: (result: OpenHandsResult) => ({
-        type: `devops:${result.status}`,
-        payload: { text: result.text },
-      }),
+      output: { type: 'devops:fixed' },
+    });
+
+    await expect(handler(makeSignal(), makeContext())).rejects.toThrow('no conversation ID');
+  });
+
+  // ── V1-specific: serverUrl default port ───────────────────
+
+  it('uses default serverUrl http://localhost:3000', async () => {
+    setupV1SuccessFlow();
+
+    const handler = withOpenHands({
+      prompt: 'Fix the CI',
+      output: { type: 'devops:fixed' },
+    });
+
+    await handler(makeSignal(), makeContext());
+
+    expect(fetchCalls[0].url).toBe('http://localhost:3000/api/v1/app-conversations');
+  });
+
+  it('uses custom serverUrl', async () => {
+    setupV1SuccessFlow();
+
+    const handler = withOpenHands({
+      serverUrl: 'http://my-openhands:3000',
+      prompt: 'Fix the CI',
+      output: { type: 'devops:fixed' },
+    });
+
+    await handler(makeSignal(), makeContext());
+
+    expect(fetchCalls[0].url).toBe('http://my-openhands:3000/api/v1/app-conversations');
+  });
+
+  // ── V1-specific: model and working directory ──────────────
+
+  it('sends model as selected_model in create body', async () => {
+    setupV1SuccessFlow();
+
+    const handler = withOpenHands({
+      model: 'openai/qwen3-coder',
+      prompt: 'Fix the CI',
+      output: { type: 'devops:fixed' },
+    });
+
+    await handler(makeSignal(), makeContext());
+
+    const createBody = JSON.parse(fetchCalls[0].init.body as string);
+    expect(createBody.selected_model).toBe('openai/qwen3-coder');
+  });
+
+  it('sends working directory as initial_cwd in create body', async () => {
+    setupV1SuccessFlow();
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      workingDirectory: '/opt/workspace/my-repo',
+      output: { type: 'devops:fixed' },
+    });
+
+    await handler(makeSignal(), makeContext());
+
+    const createBody = JSON.parse(fetchCalls[0].init.body as string);
+    expect(createBody.initial_cwd).toBe('/opt/workspace/my-repo');
+  });
+
+  it('resolves working directory from signal', async () => {
+    setupV1SuccessFlow();
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      workingDirectory: (signal) => `/opt/workspace/${(signal.payload as any).repo ?? 'default'}`,
+      output: { type: 'devops:fixed' },
+    });
+
+    const signal = makeSignal({ payload: { repo: 'my-app', logs: 'fail' } });
+    await handler(signal, makeContext());
+
+    const createBody = JSON.parse(fetchCalls[0].init.body as string);
+    expect(createBody.initial_cwd).toBe('/opt/workspace/my-app');
+  });
+
+  // ── causedBy ──────────────────────────────────────────────
+
+  it('sets causedBy in deposited signals', async () => {
+    setupV1SuccessFlow();
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
     });
     const ctx = makeContext();
 
     await handler(makeSignal(), ctx);
 
-    expect(ctx.deposits[0].type).toBe('devops:stopped');
+    expect(ctx.deposits[0].options.causedBy).toEqual(['sig_test_001']);
+  });
+
+  // ── Logging ───────────────────────────────────────────────
+
+  it('logs conversation creation and completion', async () => {
+    setupV1SuccessFlow('conv_log');
+
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
+    });
+    const ctx = makeContext();
+
+    await handler(makeSignal(), ctx);
+
+    const logMessages = ctx.logs.map(l => l.message);
+    expect(logMessages.some(m => m.includes('conv_log') && m.includes('created'))).toBe(true);
+    expect(logMessages.some(m => m.includes('finished'))).toBe(true);
   });
 });

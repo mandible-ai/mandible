@@ -1,5 +1,5 @@
-// PURPOSE: withOpenHands — Sandboxed agentic coding via OpenHands agent server.
-// PURPOSE: REST + WebSocket client for CI investigation and DevOps tasks in isolated containers.
+// PURPOSE: withOpenHands — Sandboxed agentic coding via OpenHands agent server (V1 API).
+// PURPOSE: REST client for CI investigation and DevOps tasks in isolated containers.
 
 import type { Signal, ActionContext } from '../core/types.js';
 import type { ActionHandler, OutputMapping, SignalDeposit } from './types.js';
@@ -11,9 +11,15 @@ import type { ActionHandler, OutputMapping, SignalDeposit } from './types.js';
 export interface OpenHandsConfig<T = Record<string, unknown>> {
   /**
    * OpenHands agent server URL.
-   * Default: 'http://localhost:3001'.
+   * Default: 'http://localhost:3000'.
    */
   serverUrl?: string;
+
+  /**
+   * Bearer token for V1 API authentication.
+   * Sent as `Authorization: Bearer {apiKey}` when provided.
+   */
+  apiKey?: string;
 
   /**
    * Model in "provider/model" format for the OpenHands agent.
@@ -22,17 +28,10 @@ export interface OpenHandsConfig<T = Record<string, unknown>> {
   model?: string;
 
   /**
-   * LLM base URL for the OpenHands agent to use.
-   * Points to the vLLM or other OpenAI-compatible endpoint.
-   * e.g. 'http://dgx-inference:8000/v1'
+   * Git repository URL for the sandbox.
+   * Can be a static string or derived from the signal.
    */
-  llmBaseUrl?: string;
-
-  /**
-   * LLM API key. Only sent when provided.
-   * For local vLLM setups that don't require a key, omit this field.
-   */
-  llmApiKey?: string;
+  repository?: string | ((signal: Signal<T>) => string);
 
   /**
    * Build the prompt from the incoming signal.
@@ -59,13 +58,8 @@ export interface OpenHandsConfig<T = Record<string, unknown>> {
   timeout?: number;
 
   /**
-   * Max iterations for the OpenHands agent. Default: 50.
-   */
-  maxIterations?: number;
-
-  /**
    * Event callback for observability.
-   * Called with each WebSocket event from the OpenHands server.
+   * Called with synthetic events derived from poll status changes.
    * Errors in this callback are caught and do not crash the agent.
    */
   onEvent?: (event: OpenHandsEvent) => void;
@@ -81,7 +75,7 @@ export interface OpenHandsConfig<T = Record<string, unknown>> {
 // Event and result types
 // ----------------------------------------------------------
 
-/** OpenHands WebSocket event (subset of event types we care about). */
+/** Synthetic event emitted from poll status changes. */
 export interface OpenHandsEvent {
   id: number;
   source: 'agent' | 'user' | 'environment';
@@ -97,7 +91,7 @@ export interface OpenHandsEvent {
 /** Result of an OpenHands agent conversation. */
 export interface OpenHandsResult {
   /** Final status of the conversation. */
-  status: 'finished' | 'error' | 'timeout' | 'stopped';
+  status: 'finished' | 'error' | 'timeout' | 'stopped' | 'stuck';
   /** Summary text from the agent's final message. */
   text: string;
   /** Conversation ID for debugging/tracing. */
@@ -113,7 +107,7 @@ export interface OpenHandsResult {
 // ----------------------------------------------------------
 
 /**
- * Creates an action handler powered by the OpenHands agent server.
+ * Creates an action handler powered by the OpenHands agent server (V1 API).
  *
  * OpenHands provides sandboxed terminal access inside Docker containers,
  * which is ideal for CI investigation tasks that need to:
@@ -122,24 +116,22 @@ export interface OpenHandsResult {
  * - Install dependencies and run tests
  * - Propose fixes without affecting the host
  *
- * Lifecycle:
- * 1. POST /api/conversations — create a new conversation
- * 2. POST /api/conversations/{id}/messages — send the prompt
- * 3. WebSocket /ws/{id} — stream events until completion
- * 4. DELETE /api/conversations/{id} — clean up
+ * V1 Lifecycle:
+ * 1. POST /api/v1/app-conversations — create with initial message
+ * 2. GET /api/v1/app-conversations/start-tasks — poll until READY
+ * 3. GET /api/v1/app-conversations — poll until terminal state
  */
 export function withOpenHands<T = Record<string, unknown>>(
   config: OpenHandsConfig<T>
 ): ActionHandler<T> {
   const {
-    serverUrl = 'http://localhost:3001',
+    serverUrl = 'http://localhost:3000',
+    apiKey,
     model,
-    llmBaseUrl,
-    llmApiKey,
+    repository,
     prompt,
     workingDirectory,
     timeout = 900_000,
-    maxIterations = 50,
     onEvent,
     output,
     autoWithdraw = true,
@@ -149,7 +141,15 @@ export function withOpenHands<T = Record<string, unknown>>(
     const startTime = Date.now();
     const baseUrl = serverUrl.replace(/\/$/, '');
 
-    // 1. Resolve prompt (colony templates capture env in closure for assembleContext)
+    // Build shared headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (apiKey) {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    // 1. Resolve prompt
     const resolvedPrompt = typeof prompt === 'function'
       ? await prompt(signal)
       : prompt;
@@ -159,118 +159,149 @@ export function withOpenHands<T = Record<string, unknown>>(
       ? workingDirectory(signal)
       : workingDirectory;
 
-    // 3. Create conversation
-    let conversationId: string | undefined;
+    // 3. Resolve repository
+    const repo = typeof repository === 'function'
+      ? repository(signal)
+      : repository;
+
+    // 4. Create conversation with initial message
     const events: OpenHandsEvent[] = [];
 
-    try {
-      const createBody: Record<string, unknown> = {};
-      if (model !== undefined) createBody.model = model;
-      if (llmBaseUrl !== undefined) createBody.llm_base_url = llmBaseUrl;
-      if (llmApiKey !== undefined) createBody.llm_api_key = llmApiKey;
-      if (maxIterations !== undefined) createBody.max_iterations = maxIterations;
-      if (cwd !== undefined) createBody.initial_cwd = cwd;
+    const createBody: Record<string, unknown> = {
+      initial_message: resolvedPrompt,
+    };
+    if (repo !== undefined) createBody.repository = repo;
+    if (model !== undefined) createBody.selected_model = model;
+    if (cwd !== undefined) createBody.initial_cwd = cwd;
 
-      const createRes = await fetchWithTimeout(
-        `${baseUrl}/api/conversations`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(createBody),
-        },
-        30_000
+    const createRes = await fetchWithTimeout(
+      `${baseUrl}/api/v1/app-conversations`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(createBody),
+      },
+      30_000
+    );
+
+    if (!createRes.ok) {
+      const errorText = await createRes.text().catch(() => 'unknown error');
+      throw new OpenHandsError(
+        'CONVERSATION_CREATE_FAILED',
+        `Failed to create OpenHands conversation: ${createRes.status} ${errorText}`
       );
+    }
 
-      if (!createRes.ok) {
-        const errorText = await createRes.text().catch(() => 'unknown error');
-        throw new OpenHandsError(
-          'CONVERSATION_CREATE_FAILED',
-          `Failed to create OpenHands conversation: ${createRes.status} ${errorText}`
-        );
-      }
+    const createData = await createRes.json() as Record<string, unknown>;
+    const conversationId = createData.conversation_id as string | undefined;
 
-      const createData = await createRes.json() as Record<string, unknown>;
-      conversationId = (createData.conversation_id ?? createData.id) as string | undefined;
-
-      if (!conversationId) {
-        throw new OpenHandsError(
-          'CONVERSATION_CREATE_FAILED',
-          'OpenHands returned no conversation ID'
-        );
-      }
-
-      ctx.log(`OpenHands conversation ${conversationId} created`);
-
-      // 4. Send prompt message
-      const messageRes = await fetchWithTimeout(
-        `${baseUrl}/api/conversations/${encodeURIComponent(conversationId)}/messages`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            role: 'user',
-            content: resolvedPrompt,
-          }),
-        },
-        30_000
+    if (!conversationId) {
+      throw new OpenHandsError(
+        'CONVERSATION_CREATE_FAILED',
+        'OpenHands returned no conversation ID'
       );
+    }
 
-      if (!messageRes.ok) {
-        const errorText = await messageRes.text().catch(() => 'unknown error');
-        throw new OpenHandsError(
-          'MESSAGE_SEND_FAILED',
-          `Failed to send message: ${messageRes.status} ${errorText}`
-        );
-      }
+    ctx.log(`OpenHands conversation ${conversationId} created`);
 
-      // 5. Stream events via WebSocket (or poll for completion)
-      const result = await waitForCompletion(
-        baseUrl,
-        conversationId,
-        timeout,
-        events,
-        onEvent,
-        ctx
-      );
+    // 5. Wait for startup
+    await waitForStartup(baseUrl, conversationId, headers, 60_000, ctx);
 
-      const durationMs = Date.now() - startTime;
+    // 6. Wait for completion
+    const result = await waitForCompletion(
+      baseUrl,
+      conversationId,
+      headers,
+      timeout,
+      events,
+      onEvent,
+      ctx
+    );
 
-      const openHandsResult: OpenHandsResult = {
-        status: result.status,
-        text: result.text,
-        conversationId,
-        durationMs,
-        events,
-      };
+    const durationMs = Date.now() - startTime;
 
-      ctx.log(
-        `OpenHands ${result.status} in ${durationMs}ms ` +
-        `(conversation=${conversationId}, events=${events.length})`
-      );
+    const openHandsResult: OpenHandsResult = {
+      status: result.status,
+      text: result.text,
+      conversationId,
+      durationMs,
+      events,
+    };
 
-      // 6. Deposit output signals
-      const deposits = resolveOutput(output, openHandsResult, signal);
-      for (const deposit of deposits) {
-        await ctx.deposit(deposit.type, deposit.payload ?? { ...openHandsResult }, {
-          causedBy: [signal.id],
-          tags: deposit.tags,
-          ttl: deposit.ttl,
-        });
-      }
+    ctx.log(
+      `OpenHands ${result.status} in ${durationMs}ms ` +
+      `(conversation=${conversationId}, events=${events.length})`
+    );
 
-      // 7. Auto-withdraw
-      if (autoWithdraw) {
-        await ctx.withdraw(signal.id);
-      }
-    } finally {
-      // 8. Clean up conversation
-      if (conversationId) {
-        await cleanupConversation(baseUrl, conversationId).catch((err) => {
-          ctx.log(`Warning: failed to clean up conversation ${conversationId}: ${err.message}`, 'warn');
-        });
-      }
+    // 7. Deposit output signals
+    const deposits = resolveOutput(output, openHandsResult, signal);
+    for (const deposit of deposits) {
+      await ctx.deposit(deposit.type, deposit.payload ?? { ...openHandsResult }, {
+        causedBy: [signal.id],
+        tags: deposit.tags,
+        ttl: deposit.ttl,
+      });
+    }
+
+    // 8. Auto-withdraw
+    if (autoWithdraw) {
+      await ctx.withdraw(signal.id);
     }
   };
+}
+
+// ----------------------------------------------------------
+// Startup polling
+// ----------------------------------------------------------
+
+/**
+ * Wait for the OpenHands conversation sandbox to be ready.
+ * Polls the start-tasks endpoint until READY or ERROR.
+ */
+async function waitForStartup(
+  baseUrl: string,
+  conversationId: string,
+  headers: Record<string, string>,
+  startupTimeout: number,
+  ctx: ActionContext
+): Promise<void> {
+  const deadline = Date.now() + startupTimeout;
+  const pollInterval = 2_000;
+
+  while (Date.now() < deadline) {
+    const res = await fetchWithTimeout(
+      `${baseUrl}/api/v1/app-conversations/start-tasks?ids=${encodeURIComponent(conversationId)}`,
+      { method: 'GET', headers },
+      10_000
+    ).catch(() => null);
+
+    if (res?.ok) {
+      const data = await res.json().catch(() => ({})) as Record<string, unknown>;
+      const tasks = data.tasks as Array<Record<string, unknown>> | undefined;
+      if (tasks && tasks.length > 0) {
+        const task = tasks[0];
+        const status = task.status as string;
+
+        if (status === 'READY') {
+          return;
+        }
+
+        if (status === 'ERROR') {
+          throw new OpenHandsError(
+            'STARTUP_FAILED',
+            `OpenHands startup failed for conversation ${conversationId}`
+          );
+        }
+      }
+    }
+
+    await sleep(pollInterval);
+  }
+
+  throw new OpenHandsError(
+    'STARTUP_TIMEOUT',
+    `OpenHands startup timed out after ${startupTimeout}ms for conversation ${conversationId}`
+  );
 }
 
 // ----------------------------------------------------------
@@ -278,13 +309,13 @@ export function withOpenHands<T = Record<string, unknown>>(
 // ----------------------------------------------------------
 
 /**
- * Wait for the OpenHands conversation to complete.
- * Uses polling against the conversation status endpoint.
- * WebSocket streaming is used when available for real-time events.
+ * Wait for the OpenHands conversation to reach a terminal state.
+ * Polls the conversations endpoint and emits synthetic events on status changes.
  */
 async function waitForCompletion(
   baseUrl: string,
   conversationId: string,
+  headers: Record<string, string>,
   timeout: number,
   events: OpenHandsEvent[],
   onEvent: ((event: OpenHandsEvent) => void) | undefined,
@@ -292,136 +323,77 @@ async function waitForCompletion(
 ): Promise<{ status: OpenHandsResult['status']; text: string }> {
   const deadline = Date.now() + timeout;
   const pollInterval = 5_000;
-  let lastText = '';
+  let lastStatus = '';
 
-  // Try WebSocket for event streaming (non-blocking)
-  const wsCleanup = tryWebSocketStream(baseUrl, conversationId, events, onEvent);
+  while (Date.now() < deadline) {
+    const statusRes = await fetchWithTimeout(
+      `${baseUrl}/api/v1/app-conversations?ids=${encodeURIComponent(conversationId)}`,
+      { method: 'GET', headers },
+      10_000
+    ).catch(() => null);
 
-  try {
-    while (Date.now() < deadline) {
-      // Poll conversation status
-      const statusRes = await fetchWithTimeout(
-        `${baseUrl}/api/conversations/${encodeURIComponent(conversationId)}`,
-        { method: 'GET' },
-        10_000
-      ).catch(() => null);
+    if (statusRes?.ok) {
+      const statusData = await statusRes.json().catch((err: Error) => {
+        ctx.log(`Warning: failed to parse poll response: ${err.message}`, 'warn');
+        return {};
+      }) as Record<string, unknown>;
 
-      if (statusRes?.ok) {
-        const statusData = await statusRes.json().catch((err: Error) => {
-          ctx.log(`Warning: failed to parse poll response: ${err.message}`, 'warn');
-          return {};
-        }) as Record<string, unknown>;
-        const state = statusData.status ?? statusData.state;
+      const conversations = statusData.conversations as Array<Record<string, unknown>> | undefined;
+      if (conversations && conversations.length > 0) {
+        const conv = conversations[0];
+        const executionStatus = conv.execution_status as string | undefined;
+        const sandboxStatus = conv.sandbox_status as string | undefined;
+        const lastMessage = conv.last_message as string | undefined;
 
-        if (state === 'finished' || state === 'completed' || state === 'done') {
-          lastText = extractFinalText(statusData, events);
-          return { status: 'finished', text: lastText };
+        // Emit synthetic event on status change
+        const currentStatus = `${executionStatus}:${sandboxStatus}`;
+        if (currentStatus !== lastStatus) {
+          lastStatus = currentStatus;
+          const event: OpenHandsEvent = {
+            id: events.length + 1,
+            source: 'environment',
+            observation: 'status_change',
+            message: `execution=${executionStatus} sandbox=${sandboxStatus}`,
+            timestamp: new Date().toISOString(),
+          };
+          events.push(event);
+          if (onEvent) {
+            try { onEvent(event); } catch { /* swallow callback errors */ }
+          }
         }
 
-        if (state === 'error' || state === 'failed') {
-          lastText = extractFinalText(statusData, events);
-          return { status: 'error', text: lastText || 'Agent encountered an error' };
+        // Check terminal states
+        if (executionStatus === 'FINISHED') {
+          return { status: 'finished', text: lastMessage ?? '' };
         }
 
-        if (state === 'stopped') {
-          lastText = extractFinalText(statusData, events);
-          return { status: 'stopped', text: lastText || 'Agent was stopped' };
+        if (executionStatus === 'ERROR') {
+          return { status: 'error', text: lastMessage ?? 'Agent encountered an error' };
+        }
+
+        if (executionStatus === 'STUCK') {
+          return { status: 'stuck', text: lastMessage ?? 'Agent is stuck' };
+        }
+
+        if (sandboxStatus === 'ERROR') {
+          return { status: 'error', text: lastMessage ?? 'Sandbox error' };
+        }
+
+        if (executionStatus === 'PAUSED' && sandboxStatus === 'STOPPED') {
+          return { status: 'stopped', text: lastMessage ?? 'Agent was stopped' };
         }
       }
-
-      // Wait before next poll
-      await sleep(pollInterval);
     }
 
-    // Timeout
-    return { status: 'timeout', text: lastText || 'Agent timed out' };
-  } finally {
-    wsCleanup();
+    await sleep(pollInterval);
   }
-}
 
-/**
- * Try to connect a WebSocket for event streaming.
- * Non-blocking — if WebSocket connection fails, we fall back to polling only.
- * Returns a cleanup function.
- */
-function tryWebSocketStream(
-  baseUrl: string,
-  conversationId: string,
-  events: OpenHandsEvent[],
-  onEvent: ((event: OpenHandsEvent) => void) | undefined
-): () => void {
-  let ws: any = null;
-
-  try {
-    // Convert http(s) to ws(s) URL
-    const wsUrl = baseUrl.replace(/^https?/, m => m === 'https' ? 'wss' : 'ws')
-      + `/ws/${encodeURIComponent(conversationId)}`;
-
-    // Dynamic import WebSocket (Node.js built-in from v21+, or ws package)
-    const WebSocketImpl = globalThis.WebSocket;
-    if (!WebSocketImpl) return () => {};
-
-    ws = new WebSocketImpl(wsUrl);
-
-    ws.onmessage = (msg: any) => {
-      try {
-        const event: OpenHandsEvent = JSON.parse(
-          typeof msg.data === 'string' ? msg.data : msg.data.toString()
-        );
-        events.push(event);
-        if (onEvent) {
-          try { onEvent(event); } catch { /* swallow callback errors */ }
-        }
-      } catch { /* ignore parse errors */ }
-    };
-
-    ws.onerror = () => { /* swallow — polling is the fallback */ };
-  } catch { /* WebSocket not available — polling only */ }
-
-  return () => {
-    if (ws) {
-      try { ws.close(); } catch { /* ignore */ }
-    }
-  };
+  return { status: 'timeout', text: 'Agent timed out' };
 }
 
 // ----------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------
-
-/** Extract the agent's final text from status data or event history. */
-function extractFinalText(
-  statusData: Record<string, unknown>,
-  events: OpenHandsEvent[]
-): string {
-  // Try status data first
-  if (typeof statusData.summary === 'string') return statusData.summary;
-  if (typeof statusData.result === 'string') return statusData.result;
-
-  // Fall back to last agent message from events
-  const agentMessages = events.filter(
-    e => e.source === 'agent' && (e.message || e.content)
-  );
-  if (agentMessages.length > 0) {
-    const last = agentMessages[agentMessages.length - 1];
-    return last.message ?? last.content ?? '';
-  }
-
-  return '';
-}
-
-/** DELETE the conversation to free resources. */
-async function cleanupConversation(baseUrl: string, conversationId: string): Promise<void> {
-  const res = await fetchWithTimeout(
-    `${baseUrl}/api/conversations/${encodeURIComponent(conversationId)}`,
-    { method: 'DELETE' },
-    10_000
-  );
-  if (!res.ok) {
-    throw new Error(`DELETE returned ${res.status}`);
-  }
-}
 
 /** fetch() with AbortSignal.timeout. */
 async function fetchWithTimeout(
@@ -471,7 +443,8 @@ function resolveOutput<T>(
 
 export type OpenHandsErrorCode =
   | 'CONVERSATION_CREATE_FAILED'
-  | 'MESSAGE_SEND_FAILED';
+  | 'STARTUP_FAILED'
+  | 'STARTUP_TIMEOUT';
 
 export class OpenHandsError extends Error {
   constructor(
