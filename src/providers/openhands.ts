@@ -189,8 +189,8 @@ export function withOpenHands<T = Record<string, unknown>>(
         );
       }
 
-      const createData = await createRes.json();
-      conversationId = createData.conversation_id ?? createData.id;
+      const createData = await createRes.json() as Record<string, unknown>;
+      conversationId = (createData.conversation_id ?? createData.id) as string | undefined;
 
       if (!conversationId) {
         throw new OpenHandsError(
@@ -307,10 +307,10 @@ async function waitForCompletion(
       ).catch(() => null);
 
       if (statusRes?.ok) {
-        const statusData = await statusRes.json().catch((err) => {
+        const statusData = await statusRes.json().catch((err: Error) => {
           ctx.log(`Warning: failed to parse poll response: ${err.message}`, 'warn');
           return {};
-        });
+        }) as Record<string, unknown>;
         const state = statusData.status ?? statusData.state;
 
         if (state === 'finished' || state === 'completed' || state === 'done') {
