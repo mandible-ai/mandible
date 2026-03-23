@@ -229,8 +229,8 @@ export function withOpenHands<T = Record<string, unknown>>(
 
       ctx.log(`Message sent to conversation ${conversationId}`);
 
-      // 3. Poll for completion
-      const finalStatus = await pollForCompletion(
+      // 3. Poll for completion (streams events incrementally via onEvent)
+      const { status: finalStatus, streamedEventCount } = await pollForCompletion(
         baseUrl,
         conversationId,
         headers,
@@ -240,8 +240,8 @@ export function withOpenHands<T = Record<string, unknown>>(
         ctx
       );
 
-      // 4. Fetch events
-      await fetchEvents(baseUrl, conversationId, headers, events, onEvent, ctx);
+      // 4. Fetch remaining events (skip those already streamed during polling)
+      await fetchEvents(baseUrl, conversationId, headers, events, onEvent, ctx, streamedEventCount);
 
       const durationMs = Date.now() - startTime;
 
@@ -304,10 +304,11 @@ async function pollForCompletion(
   onEvent: ((event: OpenHandsEvent) => void) | undefined,
   events: OpenHandsEvent[],
   ctx: ActionContext
-): Promise<OpenHandsResult['status']> {
+): Promise<{ status: OpenHandsResult['status']; streamedEventCount: number }> {
   const deadline = Date.now() + timeout;
   const pollInterval = 3_000;
   let lastStatus = '';
+  let streamedEventCount = 0;
 
   while (Date.now() < deadline) {
     const res = await fetchWithTimeout(
@@ -342,16 +343,55 @@ async function pollForCompletion(
         }
       }
 
+      // Stream agent events incrementally during polling
+      if (onEvent) {
+        const eventsRes = await fetchWithTimeout(
+          `${baseUrl}/api/conversations/${conversationId}/events`,
+          { method: 'GET', headers },
+          10_000
+        ).catch(() => null);
+
+        if (eventsRes?.ok) {
+          const rawEvents = await eventsRes.json().catch(() => []) as unknown[];
+          for (let i = streamedEventCount; i < rawEvents.length; i++) {
+            const raw = rawEvents[i] as Record<string, unknown>;
+            const event = parseEvent(raw, events.length + 1);
+            events.push(event);
+            try { onEvent(event); } catch { /* swallow callback errors */ }
+          }
+          streamedEventCount = rawEvents.length;
+        }
+      }
+
       // STOPPED is the terminal state for the local API
       if (status === 'STOPPED') {
-        return 'finished';
+        return { status: 'finished', streamedEventCount };
       }
     }
 
     await sleep(pollInterval);
   }
 
-  return 'timeout';
+  return { status: 'timeout', streamedEventCount };
+}
+
+// ----------------------------------------------------------
+// Event parsing
+// ----------------------------------------------------------
+
+/** Parse a raw event object from the OpenHands API into a typed event. */
+function parseEvent(raw: Record<string, unknown>, id: number): OpenHandsEvent {
+  return {
+    id,
+    source: (raw.source as OpenHandsEvent['source']) ?? 'agent',
+    action: raw.action as string | undefined,
+    observation: raw.observation as string | undefined,
+    message: raw.message as string | undefined,
+    args: raw.args as Record<string, unknown> | undefined,
+    content: raw.content as string | undefined,
+    extras: raw.extras as Record<string, unknown> | undefined,
+    timestamp: raw.timestamp as string | undefined,
+  };
 }
 
 // ----------------------------------------------------------
@@ -360,6 +400,7 @@ async function pollForCompletion(
 
 /**
  * Fetch all events from the conversation events endpoint.
+ * Skips the first `skipCount` events (already emitted during polling).
  */
 async function fetchEvents(
   baseUrl: string,
@@ -367,7 +408,8 @@ async function fetchEvents(
   headers: Record<string, string>,
   events: OpenHandsEvent[],
   onEvent: ((event: OpenHandsEvent) => void) | undefined,
-  ctx: ActionContext
+  ctx: ActionContext,
+  skipCount = 0
 ): Promise<void> {
   const res = await fetchWithTimeout(
     `${baseUrl}/api/conversations/${conversationId}/events`,
@@ -382,19 +424,9 @@ async function fetchEvents(
 
   const data = await res.json().catch(() => []) as unknown[];
 
-  for (let i = 0; i < data.length; i++) {
+  for (let i = skipCount; i < data.length; i++) {
     const raw = data[i] as Record<string, unknown>;
-    const event: OpenHandsEvent = {
-      id: events.length + 1,
-      source: (raw.source as OpenHandsEvent['source']) ?? 'agent',
-      action: raw.action as string | undefined,
-      observation: raw.observation as string | undefined,
-      message: raw.message as string | undefined,
-      args: raw.args as Record<string, unknown> | undefined,
-      content: raw.content as string | undefined,
-      extras: raw.extras as Record<string, unknown> | undefined,
-      timestamp: raw.timestamp as string | undefined,
-    };
+    const event = parseEvent(raw, events.length + 1);
     events.push(event);
     if (onEvent) {
       try { onEvent(event); } catch { /* swallow callback errors */ }

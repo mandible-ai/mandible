@@ -452,10 +452,20 @@ describe('withOpenHands', () => {
     queueResponse({ ok: true });
     // Poll 1: RUNNING
     queueResponse({ status: 'RUNNING', runtime_status: 'STATUS$READY' });
+    // Events during poll 1 (incremental fetch)
+    queueResponse([{ source: 'agent', message: 'Looking at code...' }]);
     // Poll 2: STOPPED
     queueResponse({ status: 'STOPPED', runtime_status: 'STATUS$READY' });
-    // Events
-    queueResponse([{ source: 'agent', message: 'Done' }]);
+    // Events during poll 2 (incremental fetch — same event + new one)
+    queueResponse([
+      { source: 'agent', message: 'Looking at code...' },
+      { source: 'agent', message: 'Done' },
+    ]);
+    // Final events fetch (all events, but both already streamed — skip 2)
+    queueResponse([
+      { source: 'agent', message: 'Looking at code...' },
+      { source: 'agent', message: 'Done' },
+    ]);
     // DELETE
     queueResponse({ ok: true });
 
@@ -469,17 +479,102 @@ describe('withOpenHands', () => {
 
     await handler(makeSignal(), ctx);
 
-    // Should have status change events + agent events from fetch
-    expect(receivedEvents.length).toBeGreaterThanOrEqual(2);
-    // First events are status changes from polling
+    // Status change events
     const statusEvents = receivedEvents.filter(e => e.observation === 'status_change');
     expect(statusEvents.length).toBeGreaterThanOrEqual(2);
     expect(statusEvents[0].message).toContain('RUNNING');
     expect(statusEvents[1].message).toContain('STOPPED');
+
+    // Agent events streamed during polling
+    const agentEvents = receivedEvents.filter(e => e.source === 'agent');
+    expect(agentEvents.length).toBe(2);
+    expect(agentEvents[0].message).toBe('Looking at code...');
+    expect(agentEvents[1].message).toBe('Done');
+  });
+
+  it('events streamed during polling are not re-emitted in final fetch', async () => {
+    // Create
+    queueResponse({ conversation_id: 'conv_dedup' });
+    // Message
+    queueResponse({ ok: true });
+    // Poll 1: STOPPED immediately
+    queueResponse({ status: 'STOPPED', runtime_status: 'STATUS$READY' });
+    // Events during poll (incremental fetch)
+    queueResponse([
+      { source: 'agent', message: 'Step 1' },
+      { source: 'agent', message: 'Step 2' },
+    ]);
+    // Final events fetch (same 2 events — should all be skipped)
+    queueResponse([
+      { source: 'agent', message: 'Step 1' },
+      { source: 'agent', message: 'Step 2' },
+    ]);
+    // DELETE
+    queueResponse({ ok: true });
+
+    const receivedEvents: OpenHandsEvent[] = [];
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
+      onEvent: (event) => receivedEvents.push(event),
+    });
+    const ctx = makeContext();
+
+    await handler(makeSignal(), ctx);
+
+    // Should get exactly 2 agent events (not 4)
+    const agentEvents = receivedEvents.filter(e => e.source === 'agent');
+    expect(agentEvents.length).toBe(2);
+  });
+
+  it('event fetch failure during polling does not crash the handler', async () => {
+    // Create
+    queueResponse({ conversation_id: 'conv_evfail' });
+    // Message
+    queueResponse({ ok: true });
+    // Poll 1: RUNNING
+    queueResponse({ status: 'RUNNING', runtime_status: 'STATUS$READY' });
+    // Events during poll 1 — fails
+    queueResponse({ error: 'events unavailable' }, false, 500);
+    // Poll 2: STOPPED
+    queueResponse({ status: 'STOPPED', runtime_status: 'STATUS$READY' });
+    // Events during poll 2 — succeeds
+    queueResponse([{ source: 'agent', message: 'Done after retry' }]);
+    // Final events fetch
+    queueResponse([{ source: 'agent', message: 'Done after retry' }]);
+    // DELETE
+    queueResponse({ ok: true });
+
+    const receivedEvents: OpenHandsEvent[] = [];
+    const handler = withOpenHands({
+      prompt: 'Fix it',
+      output: { type: 'devops:fixed' },
+      onEvent: (event) => receivedEvents.push(event),
+    });
+    const ctx = makeContext();
+
+    // Should not throw
+    await handler(makeSignal(), ctx);
+
+    expect(ctx.deposits[0].payload.status).toBe('finished');
+    const agentEvents = receivedEvents.filter(e => e.source === 'agent');
+    expect(agentEvents.length).toBe(1);
+    expect(agentEvents[0].message).toBe('Done after retry');
   });
 
   it('onEvent callback errors are swallowed', async () => {
-    setupLocalSuccessFlow();
+    // Create
+    queueResponse({ conversation_id: 'conv_swallow' });
+    // Message
+    queueResponse({ ok: true });
+    // Poll: STOPPED
+    queueResponse({ status: 'STOPPED', runtime_status: 'STATUS$READY' });
+    // Events during poll (incremental fetch)
+    queueResponse([{ source: 'agent', message: 'Done' }]);
+    // Final events fetch (1 already streamed — skip)
+    queueResponse([{ source: 'agent', message: 'Done' }]);
+    // DELETE
+    queueResponse({ ok: true });
 
     const handler = withOpenHands({
       prompt: 'Fix it',
@@ -791,11 +886,17 @@ describe('withOpenHands', () => {
     queueResponse({ ok: true });
     // Poll 1: RUNNING
     queueResponse({ status: 'RUNNING', runtime_status: 'STATUS$READY' });
-    // Poll 2: RUNNING (same - should NOT emit duplicate event)
+    // Events during poll 1
+    queueResponse([]);
+    // Poll 2: RUNNING (same - should NOT emit duplicate status event)
     queueResponse({ status: 'RUNNING', runtime_status: 'STATUS$READY' });
+    // Events during poll 2
+    queueResponse([]);
     // Poll 3: STOPPED
     queueResponse({ status: 'STOPPED', runtime_status: 'STATUS$READY' });
-    // Events
+    // Events during poll 3
+    queueResponse([{ source: 'agent', message: 'Done' }]);
+    // Final events fetch (1 event already streamed — skip 1)
     queueResponse([{ source: 'agent', message: 'Done' }]);
     // DELETE
     queueResponse({ ok: true });
