@@ -56,7 +56,7 @@ export {
 } from './core/environment-registry.js';
 
 // Colony DSL
-export { colony } from './dsl/builder.js';
+export { colony, ColonyBuilder } from './dsl/builder.js';
 export { mandible } from './dsl/mandible.js';
 
 // Host lifecycle
