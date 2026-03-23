@@ -249,7 +249,7 @@ describe('withOpenHands', () => {
 
   // ── 3. maxIterations ──────────────────────────────────────
 
-  it('sends maxIterations in create body', async () => {
+  it('does not send max_iterations in create body (V0 rejects extra fields)', async () => {
     setupLocalSuccessFlow();
 
     const handler = withOpenHands({
@@ -261,10 +261,10 @@ describe('withOpenHands', () => {
     await handler(makeSignal(), makeContext());
 
     const createBody = JSON.parse(fetchCalls[0].init.body as string);
-    expect(createBody.max_iterations).toBe(100);
+    expect(createBody.max_iterations).toBeUndefined();
   });
 
-  it('uses default maxIterations of 50', async () => {
+  it('accepts maxIterations config without error', async () => {
     setupLocalSuccessFlow();
 
     const handler = withOpenHands({
@@ -275,7 +275,7 @@ describe('withOpenHands', () => {
     await handler(makeSignal(), makeContext());
 
     const createBody = JSON.parse(fetchCalls[0].init.body as string);
-    expect(createBody.max_iterations).toBe(50);
+    expect(createBody.max_iterations).toBeUndefined();
   });
 
   // ── 4. conversationInstructions ────────────────────────────

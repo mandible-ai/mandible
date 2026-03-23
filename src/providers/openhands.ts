@@ -174,9 +174,9 @@ export function withOpenHands<T = Record<string, unknown>>(
 
     try {
       // 1. Create conversation
-      const createBody: Record<string, unknown> = {
-        max_iterations: maxIterations,
-      };
+      // Note: InitSessionRequest only accepts specific fields — do not send extras
+      // like max_iterations which cause 422 "Extra inputs are not permitted".
+      const createBody: Record<string, unknown> = {};
       if (repo !== undefined) createBody.repository = repo;
       if (resolvedPrompt) createBody.initial_user_msg = resolvedPrompt;
       if (branch !== undefined) createBody.selected_branch = branch;
