@@ -1,5 +1,5 @@
-// PURPOSE: withOpenHands — Sandboxed agentic coding via OpenHands agent server (V1 API).
-// PURPOSE: REST client for CI investigation and DevOps tasks in isolated containers.
+// PURPOSE: withOpenHands — Sandboxed agentic coding via OpenHands local self-hosted API.
+// PURPOSE: REST client targeting /api/conversations for CI investigation and DevOps tasks.
 
 import type { Signal, ActionContext } from '../core/types.js';
 import type { ActionHandler, OutputMapping, SignalDeposit } from './types.js';
@@ -11,21 +11,9 @@ import type { ActionHandler, OutputMapping, SignalDeposit } from './types.js';
 export interface OpenHandsConfig<T = Record<string, unknown>> {
   /**
    * OpenHands agent server URL.
-   * Default: 'http://localhost:3000'.
+   * Default: 'http://localhost:3001'.
    */
   serverUrl?: string;
-
-  /**
-   * Bearer token for V1 API authentication.
-   * Sent as `Authorization: Bearer {apiKey}` when provided.
-   */
-  apiKey?: string;
-
-  /**
-   * Model in "provider/model" format for the OpenHands agent.
-   * e.g. 'openai/qwen3-coder', 'anthropic/claude-sonnet-4-5-20250929'
-   */
-  model?: string;
 
   /**
    * Git repository URL for the sandbox.
@@ -52,6 +40,23 @@ export interface OpenHandsConfig<T = Record<string, unknown>> {
   workingDirectory?: string | ((signal: Signal<T>) => string);
 
   /**
+   * Git branch to check out in the sandbox.
+   * Can be static or derived from the signal.
+   */
+  selectedBranch?: string | ((signal: Signal<T>) => string);
+
+  /**
+   * System-level instructions for the OpenHands agent.
+   * Sent as `conversation_instructions` in the create body.
+   */
+  conversationInstructions?: string;
+
+  /**
+   * Maximum iterations the agent can take. Default: 50.
+   */
+  maxIterations?: number;
+
+  /**
    * Timeout in ms for the entire conversation. Default: 900_000 (15 min).
    * CI investigation can take a while — reproducing failures, installing deps, running tests.
    */
@@ -59,7 +64,7 @@ export interface OpenHandsConfig<T = Record<string, unknown>> {
 
   /**
    * Event callback for observability.
-   * Called with synthetic events derived from poll status changes.
+   * Called with events fetched from the conversation events endpoint.
    * Errors in this callback are caught and do not crash the agent.
    */
   onEvent?: (event: OpenHandsEvent) => void;
@@ -75,7 +80,7 @@ export interface OpenHandsConfig<T = Record<string, unknown>> {
 // Event and result types
 // ----------------------------------------------------------
 
-/** Synthetic event emitted from poll status changes. */
+/** Event from the OpenHands conversation events endpoint. */
 export interface OpenHandsEvent {
   id: number;
   source: 'agent' | 'user' | 'environment';
@@ -91,7 +96,7 @@ export interface OpenHandsEvent {
 /** Result of an OpenHands agent conversation. */
 export interface OpenHandsResult {
   /** Final status of the conversation. */
-  status: 'finished' | 'error' | 'timeout' | 'stopped' | 'stuck';
+  status: 'finished' | 'error' | 'timeout' | 'stopped';
   /** Summary text from the agent's final message. */
   text: string;
   /** Conversation ID for debugging/tracing. */
@@ -107,7 +112,7 @@ export interface OpenHandsResult {
 // ----------------------------------------------------------
 
 /**
- * Creates an action handler powered by the OpenHands agent server (V1 API).
+ * Creates an action handler powered by the OpenHands local self-hosted API.
  *
  * OpenHands provides sandboxed terminal access inside Docker containers,
  * which is ideal for CI investigation tasks that need to:
@@ -116,21 +121,24 @@ export interface OpenHandsResult {
  * - Install dependencies and run tests
  * - Propose fixes without affecting the host
  *
- * V1 Lifecycle:
- * 1. POST /api/v1/app-conversations — create with initial message
- * 2. GET /api/v1/app-conversations/start-tasks — poll until READY
- * 3. GET /api/v1/app-conversations — poll until terminal state
+ * Local API Lifecycle:
+ * 1. POST /api/conversations — create conversation
+ * 2. POST /api/conversations/{id}/message — send user prompt
+ * 3. GET /api/conversations/{id} — poll until STOPPED
+ * 4. GET /api/conversations/{id}/events — fetch agent events
+ * 5. DELETE /api/conversations/{id} — cleanup
  */
 export function withOpenHands<T = Record<string, unknown>>(
   config: OpenHandsConfig<T>
 ): ActionHandler<T> {
   const {
-    serverUrl = 'http://localhost:3000',
-    apiKey,
-    model,
+    serverUrl = 'http://localhost:3001',
     repository,
     prompt,
     workingDirectory,
+    selectedBranch,
+    conversationInstructions,
+    maxIterations = 50,
     timeout = 900_000,
     onEvent,
     output,
@@ -140,168 +148,144 @@ export function withOpenHands<T = Record<string, unknown>>(
   return async (signal: Signal<T>, ctx: ActionContext) => {
     const startTime = Date.now();
     const baseUrl = serverUrl.replace(/\/$/, '');
-
-    // Build shared headers
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`;
-    }
 
-    // 1. Resolve prompt
+    // Resolve dynamic config fields
     const resolvedPrompt = typeof prompt === 'function'
       ? await prompt(signal)
       : prompt;
 
-    // 2. Resolve working directory
     const cwd = typeof workingDirectory === 'function'
       ? workingDirectory(signal)
       : workingDirectory;
 
-    // 3. Resolve repository
     const repo = typeof repository === 'function'
       ? repository(signal)
       : repository;
 
-    // 4. Create conversation with initial message
+    const branch = typeof selectedBranch === 'function'
+      ? selectedBranch(signal)
+      : selectedBranch;
+
     const events: OpenHandsEvent[] = [];
+    let conversationId: string | undefined;
 
-    const createBody: Record<string, unknown> = {
-      initial_message: resolvedPrompt,
-    };
-    if (repo !== undefined) createBody.repository = repo;
-    if (model !== undefined) createBody.selected_model = model;
-    if (cwd !== undefined) createBody.initial_cwd = cwd;
+    try {
+      // 1. Create conversation
+      const createBody: Record<string, unknown> = {
+        max_iterations: maxIterations,
+      };
+      if (repo !== undefined) createBody.repository = repo;
+      if (resolvedPrompt) createBody.initial_user_msg = resolvedPrompt;
+      if (branch !== undefined) createBody.selected_branch = branch;
+      if (conversationInstructions !== undefined) createBody.conversation_instructions = conversationInstructions;
 
-    const createRes = await fetchWithTimeout(
-      `${baseUrl}/api/v1/app-conversations`,
-      {
-        method: 'POST',
+      const createRes = await fetchWithTimeout(
+        `${baseUrl}/api/conversations`,
+        { method: 'POST', headers, body: JSON.stringify(createBody) },
+        30_000
+      );
+
+      if (!createRes.ok) {
+        const errorText = await createRes.text().catch(() => 'unknown error');
+        throw new OpenHandsError(
+          'CONVERSATION_CREATE_FAILED',
+          `Failed to create OpenHands conversation: ${createRes.status} ${truncate(errorText, 500)}`
+        );
+      }
+
+      const createData = await createRes.json() as Record<string, unknown>;
+      conversationId = createData.conversation_id as string | undefined;
+
+      if (!conversationId) {
+        throw new OpenHandsError(
+          'CONVERSATION_CREATE_FAILED',
+          'OpenHands returned no conversation ID'
+        );
+      }
+
+      ctx.log(`OpenHands conversation ${conversationId} created`);
+
+      // 2. Send user prompt as message
+      const messageRes = await fetchWithTimeout(
+        `${baseUrl}/api/conversations/${conversationId}/message`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ message: resolvedPrompt }),
+        },
+        30_000
+      );
+
+      if (!messageRes.ok) {
+        const errorText = await messageRes.text().catch(() => 'unknown error');
+        throw new OpenHandsError(
+          'MESSAGE_SEND_FAILED',
+          `Failed to send message to conversation ${conversationId}: ${messageRes.status} ${truncate(errorText, 500)}`
+        );
+      }
+
+      ctx.log(`Message sent to conversation ${conversationId}`);
+
+      // 3. Poll for completion
+      const finalStatus = await pollForCompletion(
+        baseUrl,
+        conversationId,
         headers,
-        body: JSON.stringify(createBody),
-      },
-      30_000
-    );
-
-    if (!createRes.ok) {
-      const errorText = await createRes.text().catch(() => 'unknown error');
-      throw new OpenHandsError(
-        'CONVERSATION_CREATE_FAILED',
-        `Failed to create OpenHands conversation: ${createRes.status} ${errorText}`
+        timeout,
+        onEvent,
+        events,
+        ctx
       );
-    }
 
-    const createData = await createRes.json() as Record<string, unknown>;
-    const conversationId = createData.conversation_id as string | undefined;
+      // 4. Fetch events
+      await fetchEvents(baseUrl, conversationId, headers, events, onEvent, ctx);
 
-    if (!conversationId) {
-      throw new OpenHandsError(
-        'CONVERSATION_CREATE_FAILED',
-        'OpenHands returned no conversation ID'
+      const durationMs = Date.now() - startTime;
+
+      // Extract result text from events or conversation data
+      const resultText = extractResultText(events, finalStatus);
+
+      const openHandsResult: OpenHandsResult = {
+        status: finalStatus,
+        text: resultText,
+        conversationId,
+        durationMs,
+        events,
+      };
+
+      ctx.log(
+        `OpenHands ${finalStatus} in ${durationMs}ms ` +
+        `(conversation=${conversationId}, events=${events.length})`
       );
-    }
 
-    ctx.log(`OpenHands conversation ${conversationId} created`);
+      // 5. Deposit output signals
+      const deposits = resolveOutput(output, openHandsResult, signal);
+      for (const deposit of deposits) {
+        await ctx.deposit(deposit.type, deposit.payload ?? { ...openHandsResult }, {
+          causedBy: [signal.id],
+          tags: deposit.tags,
+          ttl: deposit.ttl,
+        });
+      }
 
-    // 5. Wait for startup
-    await waitForStartup(baseUrl, conversationId, headers, 60_000, ctx);
-
-    // 6. Wait for completion
-    const result = await waitForCompletion(
-      baseUrl,
-      conversationId,
-      headers,
-      timeout,
-      events,
-      onEvent,
-      ctx
-    );
-
-    const durationMs = Date.now() - startTime;
-
-    const openHandsResult: OpenHandsResult = {
-      status: result.status,
-      text: result.text,
-      conversationId,
-      durationMs,
-      events,
-    };
-
-    ctx.log(
-      `OpenHands ${result.status} in ${durationMs}ms ` +
-      `(conversation=${conversationId}, events=${events.length})`
-    );
-
-    // 7. Deposit output signals
-    const deposits = resolveOutput(output, openHandsResult, signal);
-    for (const deposit of deposits) {
-      await ctx.deposit(deposit.type, deposit.payload ?? { ...openHandsResult }, {
-        causedBy: [signal.id],
-        tags: deposit.tags,
-        ttl: deposit.ttl,
-      });
-    }
-
-    // 8. Auto-withdraw
-    if (autoWithdraw) {
-      await ctx.withdraw(signal.id);
-    }
-  };
-}
-
-// ----------------------------------------------------------
-// Startup polling
-// ----------------------------------------------------------
-
-/**
- * Wait for the OpenHands conversation sandbox to be ready.
- * Polls the start-tasks endpoint until READY or ERROR.
- */
-async function waitForStartup(
-  baseUrl: string,
-  conversationId: string,
-  headers: Record<string, string>,
-  startupTimeout: number,
-  ctx: ActionContext
-): Promise<void> {
-  const deadline = Date.now() + startupTimeout;
-  const pollInterval = 2_000;
-
-  while (Date.now() < deadline) {
-    const res = await fetchWithTimeout(
-      `${baseUrl}/api/v1/app-conversations/start-tasks?ids=${encodeURIComponent(conversationId)}`,
-      { method: 'GET', headers },
-      10_000
-    ).catch(() => null);
-
-    if (res?.ok) {
-      const data = await res.json().catch(() => ({})) as Record<string, unknown>;
-      const tasks = data.tasks as Array<Record<string, unknown>> | undefined;
-      if (tasks && tasks.length > 0) {
-        const task = tasks[0];
-        const status = task.status as string;
-
-        if (status === 'READY') {
-          return;
-        }
-
-        if (status === 'ERROR') {
-          throw new OpenHandsError(
-            'STARTUP_FAILED',
-            `OpenHands startup failed for conversation ${conversationId}`
-          );
-        }
+      // 6. Auto-withdraw
+      if (autoWithdraw) {
+        await ctx.withdraw(signal.id);
+      }
+    } finally {
+      // Always cleanup the conversation
+      if (conversationId) {
+        await fetchWithTimeout(
+          `${baseUrl}/api/conversations/${conversationId}`,
+          { method: 'DELETE', headers },
+          10_000
+        ).catch(() => {});
       }
     }
-
-    await sleep(pollInterval);
-  }
-
-  throw new OpenHandsError(
-    'STARTUP_TIMEOUT',
-    `OpenHands startup timed out after ${startupTimeout}ms for conversation ${conversationId}`
-  );
+  };
 }
 
 // ----------------------------------------------------------
@@ -309,86 +293,142 @@ async function waitForStartup(
 // ----------------------------------------------------------
 
 /**
- * Wait for the OpenHands conversation to reach a terminal state.
- * Polls the conversations endpoint and emits synthetic events on status changes.
+ * Poll the conversation status until it reaches a terminal state.
+ * The local API uses `status` (RUNNING/STOPPED) and `runtime_status`.
  */
-async function waitForCompletion(
+async function pollForCompletion(
   baseUrl: string,
   conversationId: string,
   headers: Record<string, string>,
   timeout: number,
-  events: OpenHandsEvent[],
   onEvent: ((event: OpenHandsEvent) => void) | undefined,
+  events: OpenHandsEvent[],
   ctx: ActionContext
-): Promise<{ status: OpenHandsResult['status']; text: string }> {
+): Promise<OpenHandsResult['status']> {
   const deadline = Date.now() + timeout;
-  const pollInterval = 5_000;
+  const pollInterval = 3_000;
   let lastStatus = '';
 
   while (Date.now() < deadline) {
-    const statusRes = await fetchWithTimeout(
-      `${baseUrl}/api/v1/app-conversations?ids=${encodeURIComponent(conversationId)}`,
+    const res = await fetchWithTimeout(
+      `${baseUrl}/api/conversations/${conversationId}`,
       { method: 'GET', headers },
       10_000
     ).catch(() => null);
 
-    if (statusRes?.ok) {
-      const statusData = await statusRes.json().catch((err: Error) => {
+    if (res?.ok) {
+      const data = await res.json().catch((err: Error) => {
         ctx.log(`Warning: failed to parse poll response: ${err.message}`, 'warn');
         return {};
       }) as Record<string, unknown>;
 
-      const conversations = statusData.conversations as Array<Record<string, unknown>> | undefined;
-      if (conversations && conversations.length > 0) {
-        const conv = conversations[0];
-        const executionStatus = conv.execution_status as string | undefined;
-        const sandboxStatus = conv.sandbox_status as string | undefined;
-        const lastMessage = conv.last_message as string | undefined;
+      const status = data.status as string | undefined;
+      const runtimeStatus = data.runtime_status as string | undefined;
 
-        // Emit synthetic event on status change
-        const currentStatus = `${executionStatus}:${sandboxStatus}`;
-        if (currentStatus !== lastStatus) {
-          lastStatus = currentStatus;
-          const event: OpenHandsEvent = {
-            id: events.length + 1,
-            source: 'environment',
-            observation: 'status_change',
-            message: `execution=${executionStatus} sandbox=${sandboxStatus}`,
-            timestamp: new Date().toISOString(),
-          };
-          events.push(event);
-          if (onEvent) {
-            try { onEvent(event); } catch { /* swallow callback errors */ }
-          }
+      // Emit synthetic event on status change
+      const currentStatus = `${status}:${runtimeStatus}`;
+      if (currentStatus !== lastStatus) {
+        lastStatus = currentStatus;
+        const event: OpenHandsEvent = {
+          id: events.length + 1,
+          source: 'environment',
+          observation: 'status_change',
+          message: `status=${status} runtime_status=${runtimeStatus}`,
+          timestamp: new Date().toISOString(),
+        };
+        events.push(event);
+        if (onEvent) {
+          try { onEvent(event); } catch { /* swallow callback errors */ }
         }
+      }
 
-        // Check terminal states
-        if (executionStatus === 'FINISHED') {
-          return { status: 'finished', text: lastMessage ?? '' };
-        }
-
-        if (executionStatus === 'ERROR') {
-          return { status: 'error', text: lastMessage ?? 'Agent encountered an error' };
-        }
-
-        if (executionStatus === 'STUCK') {
-          return { status: 'stuck', text: lastMessage ?? 'Agent is stuck' };
-        }
-
-        if (sandboxStatus === 'ERROR') {
-          return { status: 'error', text: lastMessage ?? 'Sandbox error' };
-        }
-
-        if (executionStatus === 'PAUSED' && sandboxStatus === 'STOPPED') {
-          return { status: 'stopped', text: lastMessage ?? 'Agent was stopped' };
-        }
+      // STOPPED is the terminal state for the local API
+      if (status === 'STOPPED') {
+        return 'finished';
       }
     }
 
     await sleep(pollInterval);
   }
 
-  return { status: 'timeout', text: 'Agent timed out' };
+  return 'timeout';
+}
+
+// ----------------------------------------------------------
+// Events fetching
+// ----------------------------------------------------------
+
+/**
+ * Fetch all events from the conversation events endpoint.
+ */
+async function fetchEvents(
+  baseUrl: string,
+  conversationId: string,
+  headers: Record<string, string>,
+  events: OpenHandsEvent[],
+  onEvent: ((event: OpenHandsEvent) => void) | undefined,
+  ctx: ActionContext
+): Promise<void> {
+  const res = await fetchWithTimeout(
+    `${baseUrl}/api/conversations/${conversationId}/events`,
+    { method: 'GET', headers },
+    30_000
+  ).catch(() => null);
+
+  if (!res?.ok) {
+    ctx.log(`Warning: failed to fetch events for conversation ${conversationId}`, 'warn');
+    return;
+  }
+
+  const data = await res.json().catch(() => []) as unknown[];
+
+  for (let i = 0; i < data.length; i++) {
+    const raw = data[i] as Record<string, unknown>;
+    const event: OpenHandsEvent = {
+      id: events.length + 1,
+      source: (raw.source as OpenHandsEvent['source']) ?? 'agent',
+      action: raw.action as string | undefined,
+      observation: raw.observation as string | undefined,
+      message: raw.message as string | undefined,
+      args: raw.args as Record<string, unknown> | undefined,
+      content: raw.content as string | undefined,
+      extras: raw.extras as Record<string, unknown> | undefined,
+      timestamp: raw.timestamp as string | undefined,
+    };
+    events.push(event);
+    if (onEvent) {
+      try { onEvent(event); } catch { /* swallow callback errors */ }
+    }
+  }
+}
+
+// ----------------------------------------------------------
+// Result text extraction
+// ----------------------------------------------------------
+
+/**
+ * Extract the best result text from the collected events.
+ * Falls back to a status-based message.
+ */
+function extractResultText(
+  events: OpenHandsEvent[],
+  status: OpenHandsResult['status']
+): string {
+  // Walk events in reverse looking for the last agent message
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.source === 'agent' && event.message) {
+      return event.message;
+    }
+    if (event.source === 'agent' && event.content) {
+      return event.content;
+    }
+  }
+
+  // Fallback
+  if (status === 'timeout') return 'Agent timed out';
+  if (status === 'error') return 'Agent encountered an error';
+  return '';
 }
 
 // ----------------------------------------------------------
@@ -411,8 +451,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/** Truncate a string to a max length. */
+function truncate(str: string, maxLen: number): string {
+  if (str.length <= maxLen) return str;
+  return str.slice(0, maxLen) + '...';
+}
+
 // ----------------------------------------------------------
-// Output mapping (same 3-pattern as withOpenCode/withClaudeCode)
+// Output mapping (same 3-pattern as withClaudeCode/withBash)
 // ----------------------------------------------------------
 
 function resolveOutput<T>(
@@ -443,8 +489,9 @@ function resolveOutput<T>(
 
 export type OpenHandsErrorCode =
   | 'CONVERSATION_CREATE_FAILED'
-  | 'STARTUP_FAILED'
-  | 'STARTUP_TIMEOUT';
+  | 'MESSAGE_SEND_FAILED'
+  | 'CONNECTION_FAILED'
+  | 'TIMEOUT';
 
 export class OpenHandsError extends Error {
   constructor(
