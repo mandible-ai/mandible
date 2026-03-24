@@ -250,6 +250,39 @@ describe('mandible DSL', () => {
     });
   });
 
+  describe('per-colony environment override', () => {
+    it('preserves a colony-specific environment set via .in()', async () => {
+      const hostRoot = freshRoot();
+      const colonyRoot = freshRoot();
+      await mkdir(hostRoot, { recursive: true });
+      await mkdir(colonyRoot, { recursive: true });
+
+      const hostEnv = new FilesystemEnvironment({ root: hostRoot, name: 'host-env' });
+      const colonyEnv = new FilesystemEnvironment({ root: colonyRoot, name: 'colony-env' });
+
+      const defs = await mandible('env-override-test')
+        .environment(hostEnv)
+        .colony('uses-host-env', c => c
+          .sense('task:new')
+          .do('work', async () => {})
+        )
+        .colony('uses-own-env', c => c
+          .in(colonyEnv)
+          .sense('knowledge:question', { unclaimed: true })
+          .do('answer', async () => {})
+        )
+        .build();
+
+      expect(defs).toHaveLength(2);
+      // Colony without .in() gets the host environment
+      expect(defs[0].environment).toBe(hostEnv);
+      expect(defs[0].environment.name).toBe('host-env');
+      // Colony with .in() keeps its own environment
+      expect(defs[1].environment).toBe(colonyEnv);
+      expect(defs[1].environment.name).toBe('colony-env');
+    });
+  });
+
   describe('module refs', () => {
     it('accepts a ColonyModuleRef and resolves it via dynamic import', async () => {
       const root = freshRoot();

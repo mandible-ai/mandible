@@ -57,6 +57,11 @@ export class ColonyBuilder<T = Record<string, unknown>> {
     return this;
   }
 
+  /** Check whether an environment has already been set */
+  hasEnvironment(): boolean {
+    return this._env !== undefined;
+  }
+
   /** Add a sensor — what signal types this colony watches for */
   sense(type: string | string[], queryOpts?: Partial<Omit<SignalQuery, 'type'>>): this {
     this._sensors.push({

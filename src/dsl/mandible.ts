@@ -165,12 +165,18 @@ export class MandibleBuilder {
     for (const entry of this._colonies) {
       if (entry.configurator) {
         const builder = entry.configurator(colonyBuilder(entry.name));
-        results.push(builder.in(env).build());
+        if (!builder.hasEnvironment()) {
+          builder.in(env);
+        }
+        results.push(builder.build());
       } else if (entry.moduleRef) {
         // For module refs, resolve via dynamic import (works for local host)
         const configurator = await resolveModuleRef(entry.moduleRef);
         const builder = configurator(colonyBuilder(entry.name));
-        results.push(builder.in(env).build());
+        if (!builder.hasEnvironment()) {
+          builder.in(env);
+        }
+        results.push(builder.build());
       }
     }
     return results;
