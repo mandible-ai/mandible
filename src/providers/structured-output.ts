@@ -346,6 +346,16 @@ async function resolveVercelModel(model: string): Promise<any> {
     return google(model.replace('google/', ''));
   }
 
+  if (model.startsWith('glm') || model.startsWith('zai/')) {
+    // @ts-expect-error — optional peer dependency, may not be installed
+    const { createZhipu } = await import('zhipu-ai-provider');
+    const zai = createZhipu({
+      baseURL: process.env.ZAI_BASE_URL ?? 'https://api.z.ai/api/paas/v4',
+      apiKey: process.env.ZAI_API_KEY,
+    });
+    return zai(model.replace('zai/', ''));
+  }
+
   // Default to Anthropic
   const { anthropic } = await import('@ai-sdk/anthropic');
   return anthropic(model);
