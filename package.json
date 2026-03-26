@@ -92,6 +92,7 @@
     "@anthropic-ai/sdk": ">=0.30.0",
     "ai": ">=3.0.0",
     "openai": ">=4.0.0",
+    "zhipu-ai-provider": ">=0.1.0",
     "zod": ">=3.0.0",
     "mysql2": ">=3.0.0"
   },
@@ -118,6 +119,9 @@
       "optional": true
     },
     "@ai-sdk/google": {
+      "optional": true
+    },
+    "zhipu-ai-provider": {
       "optional": true
     },
     "zod": {
