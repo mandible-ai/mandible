@@ -6,6 +6,7 @@ export type {
   GitHubEnvConfig, GitHubIssue, GitHubPullRequest, GitHubReview,
   GitHubReaction, ReactionContent,
   ConcentrationMapper, PRConcentrationMapper, ReviewState,
+  OctoStsConfig, OidcTokenSource,
 } from './types.js';
 export {
   defaultTypeMapper,
