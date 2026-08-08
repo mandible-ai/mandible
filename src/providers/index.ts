@@ -31,6 +31,9 @@ export type {
   ToolLoopResult,
   ToolCallEvent,
   TurnEvent,
+  BeforeToolCallEvent,
+  ToolCallVerdict,
+  ToolCallRecord,
 } from './tool-loop.js';
 
 // qwen-code subprocess wrapper (local agentic coding)

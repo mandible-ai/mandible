@@ -83,8 +83,19 @@ export interface ToolLoopConfig<T = Record<string, unknown>> {
   workingDirectory?: string | ((signal: Signal<T>) => string);
 
   /**
+   * Governance hook — called BEFORE each tool executes. Return
+   * `{ deny: 'reason' }` to veto the call: the tool does not run, the
+   * denial is fed back to the model as the tool result, and the
+   * transcript entry records it. Use this to enforce capability
+   * policies, audit-log calls before they act, or apply data
+   * boundaries. A thrown error aborts the run.
+   */
+  beforeToolCall?: (call: BeforeToolCallEvent<T>) => ToolCallVerdict | void | Promise<ToolCallVerdict | void>;
+
+  /**
    * Observability hook — called for each tool call.
    * Use for logging, metrics, or debugging.
+   * Results are truncated here; the full text lives in `result.transcript`.
    */
   onToolCall?: (call: ToolCallEvent) => void;
 
@@ -134,6 +145,35 @@ export interface ToolDefinition {
 // Result types
 // ----------------------------------------------------------
 
+/** What beforeToolCall saw, before the tool ran. */
+export interface BeforeToolCallEvent<T = Record<string, unknown>> {
+  tool: string;
+  args: Record<string, unknown>;
+  cwd: string;
+  turn: number;
+  signal: Signal<T>;
+}
+
+/** Returned by beforeToolCall to veto a tool call. */
+export interface ToolCallVerdict {
+  deny: string;
+}
+
+/**
+ * One entry in the run's full transcript. Unlike ToolCallEvent, the
+ * result is NOT truncated — this is the record an evidence store keeps.
+ */
+export interface ToolCallRecord {
+  turn: number;
+  tool: string;
+  args: Record<string, unknown>;
+  result: string;
+  durationMs: number;
+  error?: string;
+  /** Set when beforeToolCall vetoed the call; the tool did not run. */
+  denied?: string;
+}
+
 export interface ToolLoopResult {
   /** Final text output from the agent (last assistant message without tool calls). */
   text: string;
@@ -158,6 +198,12 @@ export interface ToolLoopResult {
 
   /** Errors encountered during tool execution (non-fatal). */
   toolErrors: Array<{ tool: string; error: string }>;
+
+  /** Tool calls vetoed by beforeToolCall. */
+  deniedToolCalls: number;
+
+  /** Full, untruncated record of every tool call in order. */
+  transcript: ToolCallRecord[];
 }
 
 export interface ToolCallEvent {
@@ -166,6 +212,8 @@ export interface ToolCallEvent {
   result: string;
   durationMs: number;
   error?: string;
+  /** Set when beforeToolCall vetoed the call; the tool did not run. */
+  denied?: string;
 }
 
 export interface TurnEvent {
@@ -198,6 +246,7 @@ export function withToolLoop<T = Record<string, unknown>>(
     maxBudget,
     timeoutMs = 120_000,
     workingDirectory,
+    beforeToolCall,
     onToolCall,
     onTurn,
     output,
@@ -246,16 +295,18 @@ export function withToolLoop<T = Record<string, unknown>>(
 
     // Loop state
     let totalToolCalls = 0;
+    let deniedToolCalls = 0;
     let totalTokens = { input: 0, output: 0 };
     let turn = 0;
     let lastText = '';
     const toolErrors: Array<{ tool: string; error: string }> = [];
+    const transcript: ToolCallRecord[] = [];
 
     while (turn < maxTurns) {
       // Check token budget
       if (maxBudget && (totalTokens.input + totalTokens.output) >= maxBudget.tokens) {
         ctx.log(`Token budget exhausted (${totalTokens.input + totalTokens.output}/${maxBudget.tokens})`);
-        const result = buildResult(lastText, 'token_budget', totalToolCalls, totalTokens, startTime, turn, toolErrors);
+        const result = buildResult(lastText, 'token_budget', totalToolCalls, totalTokens, startTime, turn, toolErrors, deniedToolCalls, transcript);
         await depositResult(result, signal, ctx, output, autoWithdraw);
         return;
       }
@@ -274,7 +325,7 @@ export function withToolLoop<T = Record<string, unknown>>(
       const choice = response.choices?.[0];
       if (!choice) {
         ctx.log('No choices in vLLM response, stopping loop.', 'error');
-        const result = buildResult(lastText, 'error', totalToolCalls, totalTokens, startTime, turn, toolErrors);
+        const result = buildResult(lastText, 'error', totalToolCalls, totalTokens, startTime, turn, toolErrors, deniedToolCalls, transcript);
         await depositResult(result, signal, ctx, output, autoWithdraw);
         return;
       }
@@ -304,7 +355,7 @@ export function withToolLoop<T = Record<string, unknown>>(
       // If no tool calls, the agent is done
       if (!hasToolCalls) {
         ctx.log(`Tool loop completed after ${turn} turns, ${totalToolCalls} tool calls.`);
-        const result = buildResult(lastText, 'complete', totalToolCalls, totalTokens, startTime, turn, toolErrors);
+        const result = buildResult(lastText, 'complete', totalToolCalls, totalTokens, startTime, turn, toolErrors, deniedToolCalls, transcript);
         await depositResult(result, signal, ctx, output, autoWithdraw);
         return;
       }
@@ -315,23 +366,52 @@ export function withToolLoop<T = Record<string, unknown>>(
         const toolArgs = parseToolArgs(tc.function?.arguments);
         const callStart = Date.now();
 
-        const executor = executors.get(toolName);
         let toolResult: string;
+        let callError: string | undefined;
+        let callDenied: string | undefined;
 
-        if (!executor) {
-          toolResult = `Error: Unknown tool "${toolName}". Available tools: ${[...executors.keys()].join(', ')}`;
-          toolErrors.push({ tool: toolName, error: `Unknown tool: ${toolName}` });
+        // The governance gate runs before anything executes. A veto is
+        // final for this call: the executor is never reached.
+        if (beforeToolCall) {
+          const verdict = await beforeToolCall({ tool: toolName, args: toolArgs, cwd, turn, signal });
+          if (verdict && typeof verdict === 'object' && 'deny' in verdict) {
+            callDenied = verdict.deny;
+          }
+        }
+
+        if (callDenied !== undefined) {
+          toolResult = `Tool call denied: ${callDenied}`;
+          deniedToolCalls++;
         } else {
-          try {
-            toolResult = await executor(toolArgs, cwd);
-          } catch (err: any) {
-            toolResult = `Error executing ${toolName}: ${err.message}`;
-            toolErrors.push({ tool: toolName, error: err.message });
+          const executor = executors.get(toolName);
+          if (!executor) {
+            toolResult = `Error: Unknown tool "${toolName}". Available tools: ${[...executors.keys()].join(', ')}`;
+            callError = `Unknown tool: ${toolName}`;
+            toolErrors.push({ tool: toolName, error: callError });
+          } else {
+            try {
+              toolResult = await executor(toolArgs, cwd);
+            } catch (err: any) {
+              const message: string = err?.message ?? String(err);
+              toolResult = `Error executing ${toolName}: ${message}`;
+              callError = message;
+              toolErrors.push({ tool: toolName, error: message });
+            }
           }
         }
 
         totalToolCalls++;
         const callDuration = Date.now() - callStart;
+
+        transcript.push({
+          turn,
+          tool: toolName,
+          args: toolArgs,
+          result: toolResult,
+          durationMs: callDuration,
+          ...(callError !== undefined ? { error: callError } : {}),
+          ...(callDenied !== undefined ? { denied: callDenied } : {}),
+        });
 
         // Fire tool call event
         onToolCall?.({
@@ -339,7 +419,8 @@ export function withToolLoop<T = Record<string, unknown>>(
           args: toolArgs,
           result: toolResult.slice(0, 1000), // truncate for observability
           durationMs: callDuration,
-          error: toolErrors.length > 0 ? toolErrors[toolErrors.length - 1]?.error : undefined,
+          error: callError,
+          ...(callDenied !== undefined ? { denied: callDenied } : {}),
         });
 
         // Add tool result to messages
@@ -353,7 +434,7 @@ export function withToolLoop<T = Record<string, unknown>>(
 
     // Max turns reached
     ctx.log(`Tool loop hit max turns (${maxTurns}). ${totalToolCalls} tool calls executed.`);
-    const result = buildResult(lastText, 'max_turns', totalToolCalls, totalTokens, startTime, maxTurns, toolErrors);
+    const result = buildResult(lastText, 'max_turns', totalToolCalls, totalTokens, startTime, maxTurns, toolErrors, deniedToolCalls, transcript);
     await depositResult(result, signal, ctx, output, autoWithdraw);
   };
 }
@@ -443,6 +524,8 @@ function buildResult(
   startTime: number,
   turns: number,
   toolErrors: Array<{ tool: string; error: string }>,
+  deniedToolCalls: number,
+  transcript: ToolCallRecord[],
 ): ToolLoopResult {
   return {
     text,
@@ -453,6 +536,8 @@ function buildResult(
     durationMs: Date.now() - startTime,
     turns,
     toolErrors,
+    deniedToolCalls,
+    transcript,
   };
 }
 
