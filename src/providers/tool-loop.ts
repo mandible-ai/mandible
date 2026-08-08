@@ -182,7 +182,10 @@ export interface ToolLoopResult {
   success: boolean;
 
   /** Why the loop stopped. */
-  stopReason: 'complete' | 'max_turns' | 'token_budget' | 'error';
+  stopReason: 'complete' | 'max_turns' | 'token_budget' | 'error' | 'refusal';
+
+  /** The refusal text, when stopReason is 'refusal'. */
+  refusal?: string;
 
   /** Total number of tool calls executed. */
   totalToolCalls: number;
@@ -336,6 +339,16 @@ export function withToolLoop<T = Record<string, unknown>>(
       // Extract text content
       if (assistantMessage.content) {
         lastText = assistantMessage.content;
+      }
+
+      // A refusal ends the run as its own outcome — not an error, and
+      // never something to retry in a loop.
+      if (choice.finish_reason === 'content_filter') {
+        ctx.log('Model refused (finish_reason=content_filter).', 'warn');
+        const result = buildResult(lastText, 'refusal', totalToolCalls, totalTokens, startTime, turn, toolErrors, deniedToolCalls, transcript);
+        result.refusal = lastText || 'finish_reason=content_filter';
+        await depositResult(result, signal, ctx, output, autoWithdraw);
+        return;
       }
 
       const toolCalls = assistantMessage.tool_calls;
