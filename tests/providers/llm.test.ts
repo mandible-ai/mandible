@@ -111,6 +111,12 @@ vi.mock('@ai-sdk/google', () => ({
   google: vi.fn().mockReturnValue('mock-google-model'),
 }));
 
+vi.mock('zhipu-ai-provider', () => ({
+  createZhipu: vi.fn().mockReturnValue(
+    vi.fn().mockReturnValue('mock-zai-model')
+  ),
+}));
+
 // ── Tests ───────────────────────────────────────────────────
 
 describe('withLLM', () => {
@@ -432,6 +438,45 @@ describe('withLLM', () => {
         })
       );
       expect(ctx.deposits[0].payload).toEqual({ text: 'Vercel AI generated text' });
+    });
+
+    it('resolves zai/ model prefix via openai-compatible provider', async () => {
+      const handler = withLLM({
+        model: 'zai/glm-5',
+        provider: 'vercel-ai',
+        prompt: 'Test prompt',
+        route: 'output:ready',
+      });
+
+      const ctx = makeContext();
+      await handler(makeSignal(), ctx);
+
+      const { createZhipu } = await import('zhipu-ai-provider');
+      expect(createZhipu).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseURL: 'https://api.z.ai/api/paas/v4',
+        })
+      );
+      expect(ctx.deposits[0].payload).toEqual({ text: 'Vercel AI generated text' });
+    });
+
+    it('resolves glm model prefix via zhipu-ai-provider', async () => {
+      const handler = withLLM({
+        model: 'glm-5',
+        provider: 'vercel-ai',
+        prompt: 'Test prompt',
+        route: 'output:ready',
+      });
+
+      const ctx = makeContext();
+      await handler(makeSignal(), ctx);
+
+      const { createZhipu } = await import('zhipu-ai-provider');
+      expect(createZhipu).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseURL: 'https://api.z.ai/api/paas/v4',
+        })
+      );
     });
 
     it('defaults to anthropic when no provider specified', async () => {
