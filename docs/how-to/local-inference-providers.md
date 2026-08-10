@@ -11,7 +11,7 @@ Mandible ships three providers for local inference:
 | `vllmProvider()` | Text generation via vLLM | Plug into `withLLM` for summaries, docs, prose |
 | `vllmStructuredProvider()` | JSON-validated output via vLLM | Plug into `withStructuredOutput` for reviews, classifications |
 | `withToolLoop()` | Agentic tool-calling loop via vLLM | Code investigation, multi-step fixes, file editing |
-| `withQwenCode()` | Subprocess wrapper for qwen-code CLI | Quick agentic coding tasks via qwen-code binary |
+| `withQwenCode()` | Subprocess wrapper for the qwen-code CLI | Agentic coding tasks via the `qwen` binary |
 
 All providers talk to a local vLLM server (OpenAI-compatible API) and work with any model vLLM supports — Qwen3-Coder-Next is the recommended default for coding tasks.
 
@@ -22,7 +22,7 @@ All providers talk to a local vLLM server (OpenAI-compatible API) and work with 
 vllm serve Qwen/Qwen3-Coder-Next --port 8001
 
 # For withQwenCode only:
-npm install -g qwen-code
+npm install -g @qwen-code/qwen-code@latest
 ```
 
 ## vllmProvider — Text Generation
@@ -240,7 +240,7 @@ withToolLoop({
 
 ## withQwenCode — qwen-code Subprocess
 
-Wraps the [qwen-code](https://github.com/anthropics/qwen-code) terminal agent as a subprocess. Same pattern as `withClaudeCode` but for local inference. qwen-code handles its own tool execution internally.
+Wraps the [qwen-code](https://github.com/QwenLM/qwen-code) terminal agent as a subprocess. Same pattern as `withClaudeCode` but for local inference. qwen-code handles its own tool execution internally.
 
 ```typescript
 import { withQwenCode } from '@mandible-ai/mandible/providers';
@@ -252,63 +252,126 @@ colony('fixer')
     model: 'Qwen3-Coder-Next',
     prompt: (signal) => `Fix this issue:\n${signal.payload.description}\n\nFile: ${signal.payload.file}`,
     workingDirectory: '/workspace/repo',
-    maxTurns: 20,
-    timeout: 600_000,  // 10 minutes
-    allowedCommands: ['npm', 'git', 'go', 'make'],
-    output: (result) => ({
-      type: result.success ? 'fix:applied' : 'fix:failed',
-      payload: { summary: result.text, exitCode: result.exitCode },
-    }),
+    maxSessionTurns: 30,
+    maxWallTime: '10m',
+    maxToolCalls: 50,
+    output: (result) => {
+      if (result.stopReason === 'budget' || result.stopReason === 'max-turns') {
+        return { type: 'fix:exhausted', payload: { summary: result.text } };
+      }
+      return {
+        type: result.success ? 'fix:applied' : 'fix:failed',
+        payload: { summary: result.text, toolCalls: result.toolCalls },
+      };
+    },
   }))
   .concurrency(1)
   .claim('lease', 600_000)
   .build();
 ```
 
+### Approval mode
+
+Headless runs still gate write/shell tools behind approval, and there is nobody
+present to approve them — so the provider defaults to `approvalMode: 'yolo'`.
+That auto-approves every tool call **without** a sandbox. On anything but an
+ephemeral runner, bound it:
+
+```typescript
+withQwenCode({
+  endpoint: 'http://localhost:8001',
+  prompt: 'Audit dependencies for known CVEs',
+  approvalMode: 'yolo',
+  sandbox: true,                        // run tools in the CLI's sandbox image
+  excludeTools: ['shell'],              // or take the dangerous tools away
+  maxToolCalls: 25,
+})
+```
+
 ### Configuration
 
 ```typescript
 withQwenCode({
-  endpoint: string;                // Required. vLLM URL → sets OPENAI_BASE_URL.
+  endpoint: string;                // Required. vLLM URL → OPENAI_BASE_URL (/v1 appended).
   model?: string;                  // Optional. Default: 'Qwen3-Coder-Next'.
   apiKey?: string;                 // Optional. Sets OPENAI_API_KEY.
   prompt: string | ((signal) => string | Promise<string>);  // Required.
   workingDirectory?: string | ((signal) => string);  // Optional.
-  maxTurns?: number;               // Optional. Default: 20.
-  timeout?: number;                // Optional. Session timeout in ms. Default: 600s.
-  allowedCommands?: string[];      // Optional. Restrict shell commands.
+  approvalMode?: 'plan' | 'default' | 'auto-edit' | 'auto' | 'yolo';  // Default: 'yolo'.
+  outputFormat?: 'text' | 'json' | 'stream-json';  // Default: 'json'.
+  maxSessionTurns?: number;        // Optional. Default: 20. Overrun exits 53.
+  maxToolCalls?: number;           // Optional. Overrun exits 55.
+  maxWallTime?: string | number;   // Optional. '30s' | '5m' | '1h' | seconds. Exits 55.
+  excludeTools?: string[];         // Optional. e.g. ['shell', 'write'].
+  includeDirectories?: string[];   // Optional. Extra context directories.
+  systemPrompt?: string;           // Optional. Replaces the built-in prompt.
+  appendSystemPrompt?: string;     // Optional. Appended to the built-in prompt.
+  sandbox?: boolean;               // Optional. Default: false.
+  unattendedRetry?: boolean;       // Optional. Retry 429/529 indefinitely.
+  timeout?: number;                // Optional. Hard subprocess kill in ms. Default: 600s.
   env?: Record<string, string>;    // Optional. Extra env vars for subprocess.
-  binary?: string;                 // Optional. Path to qwen-code. Default: 'qwen-code'.
+  binary?: string;                 // Optional. Path to qwen. Default: 'qwen'.
   output?: OutputMapping;          // Optional. Signal deposit mapping.
   autoWithdraw?: boolean;          // Optional. Default: true.
-  onOutput?: (chunk: string) => void;  // Optional. Real-time output streaming.
+  onOutput?: (chunk: string) => void;      // Optional. Raw stdout chunks.
+  onMessage?: (msg: QwenMessage) => void;  // Optional. stream-json messages.
 })
 ```
+
+`maxWallTime` is the CLI's own cooperative budget — it stops the agent cleanly
+and exits 55. `timeout` is Mandible's hard SIGTERM/SIGKILL backstop. Set both.
 
 ### Result Object
 
 ```typescript
 interface QwenCodeResult {
-  text: string;       // stdout from qwen-code
-  stderr: string;     // stderr output
-  exitCode: number;   // 0 = success
+  text: string;         // The agent's final answer (raw stdout if unparseable)
+  stdout: string;       // Raw stdout
+  stderr: string;
+  exitCode: number;     // 0 ok · 53 turn cap · 55 budget · 130 interrupt
+  stopReason: 'success' | 'error' | 'max-turns' | 'budget'
+            | 'interrupted' | 'timeout' | 'spawn-failed';
   durationMs: number;
-  success: boolean;
+  success: boolean;     // exitCode === 0
+  isError: boolean;     // the CLI reported an error result
   timedOut: boolean;
+  sessionId?: string;   // reusable with the CLI's --resume
+  model?: string;
+  subtype?: string;     // 'success' | 'error_during_execution' | ...
+  usage: { input_tokens: number; output_tokens: number };
+  toolCalls: number;
+  messages: QwenMessage[];   // empty in 'text' mode or on a parse failure
 }
+```
+
+Branch on `stopReason`, not just `success` — an exhausted budget is a signal to
+re-queue with more headroom, whereas a genuine error usually is not.
+
+### Live progress with stream-json
+
+```typescript
+withQwenCode({
+  endpoint: 'http://localhost:8001',
+  prompt: 'Migrate callbacks to async/await in src/',
+  outputFormat: 'stream-json',
+  onMessage: (msg) => {
+    if (msg.type === 'assistant') console.log('thinking…');
+    if (msg.type === 'result') console.log('done:', msg.result);
+  },
+})
 ```
 
 ### When to Use withQwenCode vs withToolLoop
 
 | Factor | withQwenCode | withToolLoop |
 |--------|-------------|-------------|
-| Setup | Requires `qwen-code` binary installed | No external binary needed |
+| Setup | Requires the `qwen` binary installed | No external binary needed |
 | Tool execution | qwen-code handles it internally | You control the tool implementations |
 | Custom tools | Limited to qwen-code's built-in tools | Define any custom tools |
-| Observability | stdout/stderr only | Per-tool-call and per-turn hooks |
-| Token tracking | Not available (hidden inside qwen-code) | Full token counting |
+| Observability | Session messages via `onMessage` | Per-tool-call and per-turn hooks |
+| Token tracking | Totals per run (`usage`, `toolCalls`) | Full per-turn token counting |
 | Speed to ship | Faster (thin subprocess wrapper) | More implementation work |
-| Control | Less (black box subprocess) | Full control over the loop |
+| Control | Less (the CLI owns the loop) | Full control over the loop |
 
 ## Error Handling
 
