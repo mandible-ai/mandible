@@ -25,6 +25,12 @@ import {
 
 export class GitHubEnvironment implements SerializableEnvironment {
   readonly name: string;
+  /**
+   * A GitHub environment authenticates with GITHUB_TOKEN unless a token was
+   * passed inline; remote hosts use this to declare what the zone must be
+   * supplied with (names only — the value arrives via process.env).
+   */
+  readonly requiredSecrets: string[];
   private readonly config: GitHubEnvConfig;
   private readonly client: GitHubClient;
   private readonly typeMapper: (issue: GitHubIssue) => string;
@@ -59,6 +65,7 @@ export class GitHubEnvironment implements SerializableEnvironment {
   private initialized = false;
 
   constructor(config: GitHubEnvConfig) {
+    this.requiredSecrets = config.token ? [] : ['GITHUB_TOKEN'];
     this.config = config;
     this.name = config.name ?? `gh:${config.owner}/${config.repo}`;
     this.client = new GitHubClient(config);
