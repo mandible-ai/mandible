@@ -55,8 +55,10 @@ declare module '@ai-sdk/anthropic' {
 
 declare module '@ai-sdk/openai' {
   export function openai(model: string): any;
+  export function createOpenAI(options: { baseURL?: string; apiKey?: string }): (model: string) => any;
 }
 
 declare module '@ai-sdk/google' {
   export function google(model: string): any;
+  export function createGoogleGenerativeAI(options: { apiKey?: string }): (model: string) => any;
 }
