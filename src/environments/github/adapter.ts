@@ -25,6 +25,13 @@ import {
 
 export class GitHubEnvironment implements SerializableEnvironment {
   readonly name: string;
+  /**
+   * Declared secret names for remote deployment (default GITHUB_TOKEN —
+   * tokens never travel in serialized config, so the zone must be supplied
+   * one via the host's secret delivery; override with [] for anonymous
+   * public-repo access).
+   */
+  readonly requiredSecrets: string[];
   private readonly config: GitHubEnvConfig;
   private readonly client: GitHubClient;
   private readonly typeMapper: (issue: GitHubIssue) => string;
@@ -59,6 +66,7 @@ export class GitHubEnvironment implements SerializableEnvironment {
   private initialized = false;
 
   constructor(config: GitHubEnvConfig) {
+    this.requiredSecrets = config.requiredSecrets ?? ['GITHUB_TOKEN'];
     this.config = config;
     this.name = config.name ?? `gh:${config.owner}/${config.repo}`;
     this.client = new GitHubClient(config);
@@ -580,12 +588,14 @@ export class GitHubEnvironment implements SerializableEnvironment {
   }
 
   serialize(): EnvironmentConfig {
+    // Deliberately no token: serialized config travels in deploy requests
+    // and the zone's workload spec. The deserializer reads GITHUB_TOKEN
+    // from process.env, which the secrets delivery path supplies (ADR-009).
     return {
       type: 'github',
       name: this.name,
       owner: this.config.owner,
       repo: this.config.repo,
-      token: this.config.token,
       pollInterval: this.config.pollInterval,
     };
   }
