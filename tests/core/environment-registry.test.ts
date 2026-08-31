@@ -124,12 +124,14 @@ describe('GitHubEnvironment serialization', () => {
       pollInterval: 15_000,
     });
     const config = env.serialize();
+    // Tokens deliberately never serialize: this config travels in deploy
+    // requests and the zone's workload spec. Zones read GITHUB_TOKEN from
+    // process.env, supplied by the host's secret delivery.
     expect(config).toEqual({
       type: 'github',
       name: 'gh-test',
       owner: 'acme',
       repo: 'widgets',
-      token: 'ghp_test123',
       pollInterval: 15_000,
     });
   });
@@ -221,11 +223,12 @@ describe('Environment serialization output compatibility', () => {
       pollInterval: 5000,
     });
     const config = env.serialize();
-    // Old output: { type: 'github', owner: 'acme', repo: 'repo', token: 'tok', name: 'gh', pollInterval: 5000 }
+    // Shape intentionally changed from the old output: token no longer
+    // serializes (it leaked into deploy requests and the workload spec).
     expect(config.type).toBe('github');
     expect(config.owner).toBe('acme');
     expect(config.repo).toBe('repo');
-    expect(config.token).toBe('tok');
+    expect(config.token).toBeUndefined();
     expect(config.name).toBe('gh');
     expect(config.pollInterval).toBe(5000);
   });
