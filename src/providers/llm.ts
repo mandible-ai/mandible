@@ -239,6 +239,23 @@ async function callOpenAIText(
 }
 
 /**
+ * Resolve a bare model name to this zone's gateway model group. The zone key
+ * is scoped to MANDIBLE_MODEL_GROUPS (injected at launch); tenant provider
+ * credentials register project-scoped groups like "proj_x/gemini-3.7-flash",
+ * so a colony can keep writing the bare model name and run unchanged whether
+ * the group is platform-provided or BYO. Exact matches win; otherwise the
+ * first group ending in "/<model>" is used; with no group list the name
+ * passes through untouched.
+ */
+export function resolveGatewayGroup(model: string): string {
+  const groups = (process.env.MANDIBLE_MODEL_GROUPS ?? '')
+    .split(',').map((g) => g.trim()).filter(Boolean);
+  if (groups.length === 0 || groups.includes(model)) return model;
+  const scoped = groups.find((g) => g.endsWith('/' + model));
+  return scoped ?? model;
+}
+
+/**
  * Gemini, gateway-first. Inside a Mandible zone the LiteLLM gateway fronts
  * Gemini over the OpenAI-compatible surface with the zone's metered key
  * (OPENAI_BASE_URL / OPENAI_API_KEY are injected at launch); the tenant's
@@ -252,7 +269,7 @@ async function callGeminiText(
 ): Promise<string> {
   const normalized = model.replace(/^(gemini|google)\//, '');
   if (process.env.OPENAI_BASE_URL && process.env.OPENAI_API_KEY) {
-    return callOpenAIText(normalized, prompt, options);
+    return callOpenAIText(resolveGatewayGroup(normalized), prompt, options);
   }
 
   const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
@@ -340,7 +357,7 @@ async function resolveVercelModel(model: string): Promise<any> {
       return createOpenAI({
         baseURL: process.env.OPENAI_BASE_URL,
         apiKey: process.env.OPENAI_API_KEY,
-      })(normalized);
+      })(resolveGatewayGroup(normalized));
     }
     const { google } = await import('@ai-sdk/google');
     return google(normalized);

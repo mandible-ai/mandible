@@ -134,3 +134,62 @@ describe('gemini provider', () => {
     await expect(handler(makeSignal(), makeContext())).rejects.toThrow(/GEMINI_API_KEY|gateway/);
   });
 });
+
+describe('gateway model-group resolution', () => {
+  it('resolves a bare model to the project-scoped group when no exact group exists', async () => {
+    vi.stubEnv('OPENAI_BASE_URL', 'https://gw.test/v1');
+    vi.stubEnv('OPENAI_API_KEY', 'sk-zone-key');
+    vi.stubEnv('MANDIBLE_MODEL_GROUPS', 'proj_abc/gemini-3.7-flash,proj_abc/claude-sonnet-5');
+
+    const handler = withLLM({
+      provider: 'gemini',
+      model: 'gemini-3.7-flash',
+      prompt: 'Say hi',
+      route: 'out:ready',
+    });
+    await handler(makeSignal(), makeContext());
+
+    const { default: OpenAI } = await import('openai');
+    expect((OpenAI as any)._mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'proj_abc/gemini-3.7-flash' })
+    );
+  });
+
+  it('prefers an exact group match over a suffix match', async () => {
+    vi.stubEnv('OPENAI_BASE_URL', 'https://gw.test/v1');
+    vi.stubEnv('OPENAI_API_KEY', 'sk-zone-key');
+    vi.stubEnv('MANDIBLE_MODEL_GROUPS', 'gemini-3.7-flash,proj_abc/gemini-3.7-flash');
+
+    const handler = withLLM({
+      provider: 'gemini',
+      model: 'gemini-3.7-flash',
+      prompt: 'Say hi',
+      route: 'out:ready',
+    });
+    await handler(makeSignal(), makeContext());
+
+    const { default: OpenAI } = await import('openai');
+    expect((OpenAI as any)._mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'gemini-3.7-flash' })
+    );
+  });
+
+  it('passes the name through unchanged when no groups are declared', async () => {
+    vi.stubEnv('OPENAI_BASE_URL', 'https://gw.test/v1');
+    vi.stubEnv('OPENAI_API_KEY', 'sk-zone-key');
+    vi.stubEnv('MANDIBLE_MODEL_GROUPS', '');
+
+    const handler = withLLM({
+      provider: 'gemini',
+      model: 'gemini-3.7-flash',
+      prompt: 'Say hi',
+      route: 'out:ready',
+    });
+    await handler(makeSignal(), makeContext());
+
+    const { default: OpenAI } = await import('openai');
+    expect((OpenAI as any)._mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'gemini-3.7-flash' })
+    );
+  });
+});

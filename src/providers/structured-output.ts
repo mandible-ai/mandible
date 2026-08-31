@@ -31,6 +31,7 @@
 // ============================================================
 
 import type { Signal, ActionContext } from '../core/types.js';
+import { resolveGatewayGroup } from './llm.js';
 import type {
   StructuredOutputConfig,
   ActionHandler,
@@ -152,7 +153,7 @@ async function callProvider<R>(
       // gateway fronts Gemini over the OpenAI-compatible surface.
       const normalized = model.replace(/^(gemini|google)\//, '');
       if (process.env.OPENAI_BASE_URL && process.env.OPENAI_API_KEY) {
-        return callOpenAI(normalized, prompt, options);
+        return callOpenAI(resolveGatewayGroup(normalized), prompt, options);
       }
       return callVercelAI(normalized, prompt, options);
     }
@@ -358,7 +359,7 @@ async function resolveVercelModel(model: string): Promise<any> {
       return createOpenAI({
         baseURL: process.env.OPENAI_BASE_URL,
         apiKey: process.env.OPENAI_API_KEY,
-      })(normalized);
+      })(resolveGatewayGroup(normalized));
     }
     const { google } = await import('@ai-sdk/google');
     return google(normalized);
