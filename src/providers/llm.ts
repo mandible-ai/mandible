@@ -96,7 +96,7 @@ export function withLLM<T = Record<string, unknown>>(
 // ----------------------------------------------------------
 
 async function callTextProvider(
-  provider: 'anthropic' | 'bedrock' | 'openai' | 'vercel-ai',
+  provider: 'anthropic' | 'bedrock' | 'openai' | 'vercel-ai' | 'gemini',
   model: string,
   prompt: string,
   options: {
@@ -115,8 +115,10 @@ async function callTextProvider(
       return callOpenAIText(model, prompt, options);
     case 'vercel-ai':
       return callVercelAIText(model, prompt, options);
+    case 'gemini':
+      return callGeminiText(model, prompt, options);
     default:
-      throw new Error(`Unknown provider: ${provider}. Use 'anthropic', 'bedrock', 'openai', 'vercel-ai', or pass a custom function.`);
+      throw new Error(`Unknown provider: ${provider}. Use 'anthropic', 'bedrock', 'openai', 'vercel-ai', 'gemini', or pass a custom function.`);
   }
 }
 
@@ -236,6 +238,53 @@ async function callOpenAIText(
   }
 }
 
+/**
+ * Gemini, gateway-first. Inside a Mandible zone the LiteLLM gateway fronts
+ * Gemini over the OpenAI-compatible surface with the zone's metered key
+ * (OPENAI_BASE_URL / OPENAI_API_KEY are injected at launch); the tenant's
+ * real provider key never enters the zone. Outside a zone, talk to Google
+ * directly with GEMINI_API_KEY.
+ */
+async function callGeminiText(
+  model: string,
+  prompt: string,
+  options: { systemPrompt?: string; maxTokens?: number; temperature?: number }
+): Promise<string> {
+  const normalized = model.replace(/^(gemini|google)\//, '');
+  if (process.env.OPENAI_BASE_URL && process.env.OPENAI_API_KEY) {
+    return callOpenAIText(normalized, prompt, options);
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      'Gemini provider needs GEMINI_API_KEY (direct access), or a Mandible ' +
+      'model gateway (OPENAI_BASE_URL + OPENAI_API_KEY, injected inside zones).'
+    );
+  }
+  try {
+    const { generateText } = await import('ai');
+    const { createGoogleGenerativeAI } = await import('@ai-sdk/google');
+    const google = createGoogleGenerativeAI({ apiKey });
+    const { text } = await generateText({
+      model: google(normalized),
+      prompt,
+      ...(options.systemPrompt ? { system: options.systemPrompt } : {}),
+      ...(options.maxTokens ? { maxTokens: options.maxTokens } : {}),
+      ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+    });
+    return text;
+  } catch (err: any) {
+    if (err.code === 'MODULE_NOT_FOUND' || err.code === 'ERR_MODULE_NOT_FOUND') {
+      throw new Error(
+        'Gemini provider requires ai and @ai-sdk/google. Install them:\n' +
+        '  npm install ai @ai-sdk/google'
+      );
+    }
+    throw err;
+  }
+}
+
 async function callVercelAIText(
   model: string,
   prompt: string,
@@ -283,8 +332,18 @@ async function resolveVercelModel(model: string): Promise<any> {
   }
 
   if (model.startsWith('gemini') || model.startsWith('google/')) {
+    const normalized = model.replace(/^(gemini|google)\//, '');
+    if (process.env.OPENAI_BASE_URL && process.env.OPENAI_API_KEY) {
+      // Mandible zone: the model gateway fronts Gemini; route through it so
+      // the call stays metered and the provider key stays out of the zone.
+      const { createOpenAI } = await import('@ai-sdk/openai');
+      return createOpenAI({
+        baseURL: process.env.OPENAI_BASE_URL,
+        apiKey: process.env.OPENAI_API_KEY,
+      })(normalized);
+    }
     const { google } = await import('@ai-sdk/google');
-    return google(model.replace('google/', ''));
+    return google(normalized);
   }
 
   if (model.startsWith('glm') || model.startsWith('zai/')) {
