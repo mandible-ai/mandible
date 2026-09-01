@@ -310,7 +310,8 @@ describe('createTokenProvider', () => {
     process.env.GITHUB_TOKEN = 'ghp_env_token';
     const provider = createTokenProvider({ owner: 'org', repo: 'repo' });
     expect(provider).toBeDefined();
-    expect(provider!.constructor.name).toBe('StaticTokenProvider');
+    // Env fallback is lazy so zone secret rotation propagates without restart.
+    expect(provider!.constructor.name).toBe('EnvTokenProvider');
   });
 
   it('returns undefined when no token source is available', () => {
