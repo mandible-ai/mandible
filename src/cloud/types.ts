@@ -52,6 +52,8 @@ export interface DeployColonyConfig {
   resources?: HostResources;
   environmentConfig?: Record<string, unknown>;
   moduleRef?: { export: string; args?: unknown[] };
+  /** Declared tenant secret names. Names only, never values. */
+  secrets?: string[];
 }
 
 /**
@@ -69,6 +71,8 @@ export interface ColonyModuleRef {
   export: string;
   /** Arguments to pass to the configurator function */
   args?: unknown[];
+  /** Tenant secret names this colony declares; supplied via process.env at runtime */
+  secrets?: string[];
 }
 
 

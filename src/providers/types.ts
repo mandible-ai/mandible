@@ -184,7 +184,7 @@ export interface StructuredOutputConfig<T = Record<string, unknown>, R = Record<
    * 'vercel-ai' = Vercel AI SDK (ai package)
    * Or pass a custom function.
    */
-  provider?: 'anthropic' | 'bedrock' | 'openai' | 'vercel-ai' | LLMCallFunction<R>;
+  provider?: 'anthropic' | 'bedrock' | 'openai' | 'vercel-ai' | 'gemini' | LLMCallFunction<R>;
 
   /** Build the prompt from the signal. */
   prompt: string | ((signal: Signal<T>) => string | Promise<string>);
@@ -248,7 +248,7 @@ export interface LLMConfig<T = Record<string, unknown>> {
    * 'vercel-ai' = Vercel AI SDK (ai package)
    * Or pass a custom function.
    */
-  provider?: 'anthropic' | 'bedrock' | 'openai' | 'vercel-ai' | LLMCallFunction<string>;
+  provider?: 'anthropic' | 'bedrock' | 'openai' | 'vercel-ai' | 'gemini' | LLMCallFunction<string>;
 
   /** Build the prompt from the signal. */
   prompt: string | ((signal: Signal<T>) => string | Promise<string>);

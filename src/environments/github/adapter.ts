@@ -26,6 +26,19 @@ import {
 
 export class GitHubEnvironment implements SerializableEnvironment {
   readonly name: string;
+  /**
+   * Declared secret names for remote deployment (default GITHUB_TOKEN —
+   * tokens never travel in serialized config, so the zone must be supplied
+   * one via the host's secret delivery; override with [] for anonymous
+   * public-repo access).
+   */
+  /**
+   * Declared secret names for remote deployment. Default: GITHUB_TOKEN for
+   * static-token mode (tokens never serialize, so the zone must be supplied
+   * one); empty for sts mode (the runtime OIDC exchange needs no tenant
+   * secret); override with [] for anonymous public-repo access.
+   */
+  readonly requiredSecrets: string[];
   private readonly config: GitHubEnvConfig;
   private readonly client: GitHubClient;
   private readonly typeMapper: (issue: GitHubIssue) => string;
@@ -60,6 +73,10 @@ export class GitHubEnvironment implements SerializableEnvironment {
   private initialized = false;
 
   constructor(config: GitHubEnvConfig) {
+    // STS mode needs no tenant secret: the zone's platform-injected OIDC
+    // token is exchanged for a short-lived GitHub token at runtime. Static
+    // mode declares GITHUB_TOKEN so the host's secret delivery supplies it.
+    this.requiredSecrets = config.requiredSecrets ?? (config.sts ? [] : ['GITHUB_TOKEN']);
     this.config = config;
     this.name = config.name ?? `gh:${config.owner}/${config.repo}`;
     const tokenProvider = createTokenProvider({
@@ -585,6 +602,11 @@ export class GitHubEnvironment implements SerializableEnvironment {
   }
 
   serialize(): EnvironmentConfig {
+    // Deliberately no token: serialized config travels in deploy requests
+    // and the zone's workload spec. The deserializer reads GITHUB_TOKEN
+    // from process.env, which the secrets delivery path supplies (ADR-009).
+    // STS config (identity, endpoint) is not a secret and does travel; the
+    // OIDC credential it exchanges comes from the zone's runtime env.
     const config: EnvironmentConfig = {
       type: 'github',
       name: this.name,

@@ -138,6 +138,15 @@ export interface Environment {
   /** Human-readable name for this environment instance */
   readonly name: string;
 
+  /**
+   * Secret names this environment needs at runtime (e.g. a GitHub
+   * environment needs GITHUB_TOKEN). Names only, never values: hosts that
+   * deploy remotely use this to declare what the runtime must supply, and
+   * the environment reads the values from process.env as usual. Optional —
+   * environments without secret needs require no change.
+   */
+  readonly requiredSecrets?: string[];
+
   /** Observe signals matching a query */
   observe(query: SignalQuery): Promise<Signal[]>;
 
@@ -312,6 +321,13 @@ export interface ColonyDefinition<T = Record<string, unknown>> {
 
   /** Per-colony resource allocation (overrides host default) */
   resources?: HostResources;
+
+  /**
+   * Tenant secret names this colony declares beyond what its environment
+   * requires. Names only — values are supplied by the host runtime and
+   * appear in process.env.
+   */
+  secrets?: string[];
 }
 
 export interface SensorConfig {

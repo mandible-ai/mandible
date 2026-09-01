@@ -112,6 +112,15 @@ export interface OctoStsConfig {
 // ----------------------------------------------------------
 
 export interface GitHubEnvConfig {
+  /**
+   * Secret names this environment declares for remote deployment. Defaults
+   * to ['GITHUB_TOKEN']: tokens never travel in serialized config, so a
+   * cloud zone must be supplied one — unauthenticated GitHub polling is
+   * rate-limited into uselessness. Public-repo colonies that genuinely want
+   * anonymous access opt out with an empty array.
+   */
+  requiredSecrets?: string[];
+
   /** Repository owner (user or org) */
   owner: string;
 

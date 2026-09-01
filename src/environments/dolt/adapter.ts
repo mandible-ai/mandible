@@ -45,6 +45,14 @@ import { DoltHubClient, sqlValue, type DoltHubConfig } from './client.js';
 import { tryCreateSQLClient, type DoltSQLClient, type DoltSQLConfig } from './sql-client.js';
 
 export interface DoltEnvConfig extends DoltHubConfig {
+  /**
+   * Secret names this environment declares for remote deployment. Defaults
+   * to [] because unauthenticated DoltHub access is a legitimate mode for
+   * public databases; set ['DOLTHUB_TOKEN'] for private ones so a cloud
+   * deploy fails loudly instead of polling 404s.
+   */
+  requiredSecrets?: string[];
+
   /** Human-readable name */
   name?: string;
   /** Poll interval for watch() in milliseconds (default: 5000) */
@@ -73,6 +81,8 @@ const CREATE_TABLE_SQL = `CREATE TABLE IF NOT EXISTS signals (
 )`;
 
 export class DoltEnvironment implements SerializableEnvironment {
+  /** Declared secret names for remote deployment; see DoltEnvConfig.requiredSecrets. */
+  readonly requiredSecrets: string[];
   readonly name: string;
   private client: DoltHubClient;
   private sqlClient?: DoltSQLClient;
@@ -81,6 +91,7 @@ export class DoltEnvironment implements SerializableEnvironment {
   private initPromise?: Promise<void>;
 
   constructor(config: DoltEnvConfig) {
+    this.requiredSecrets = config.requiredSecrets ?? [];
     this.config = config;
     this.client = new DoltHubClient(config);
     this.name = config.name ?? `dolt:${config.owner}/${config.database}/${config.branch ?? 'main'}`;

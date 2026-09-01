@@ -31,6 +31,7 @@
 // ============================================================
 
 import type { Signal, ActionContext } from '../core/types.js';
+import { resolveGatewayGroup } from './llm.js';
 import type {
   StructuredOutputConfig,
   ActionHandler,
@@ -151,7 +152,7 @@ export function withStructuredOutput<
 // ----------------------------------------------------------
 
 async function callProvider<R>(
-  provider: 'anthropic' | 'bedrock' | 'openai' | 'vercel-ai',
+  provider: 'anthropic' | 'bedrock' | 'openai' | 'vercel-ai' | 'gemini',
   model: string,
   prompt: string,
   options: {
@@ -171,8 +172,17 @@ async function callProvider<R>(
       return callOpenAI(model, prompt, options);
     case 'vercel-ai':
       return callVercelAI(model, prompt, options);
+    case 'gemini': {
+      // Gateway-first (see llm.ts): inside a Mandible zone the model
+      // gateway fronts Gemini over the OpenAI-compatible surface.
+      const normalized = model.replace(/^(gemini|google)\//, '');
+      if (process.env.OPENAI_BASE_URL && process.env.OPENAI_API_KEY) {
+        return callOpenAI(resolveGatewayGroup(normalized), prompt, options);
+      }
+      return callVercelAI(normalized, prompt, options);
+    }
     default:
-      throw new Error(`Unknown provider: ${provider}. Use 'anthropic', 'bedrock', 'openai', 'vercel-ai', or pass a custom function.`);
+      throw new Error(`Unknown provider: ${provider}. Use 'anthropic', 'bedrock', 'openai', 'vercel-ai', 'gemini', or pass a custom function.`);
   }
 }
 
@@ -378,8 +388,17 @@ async function resolveVercelModel(model: string): Promise<any> {
   }
 
   if (model.startsWith('gemini') || model.startsWith('google/')) {
+    const normalized = model.replace(/^(gemini|google)\//, '');
+    if (process.env.OPENAI_BASE_URL && process.env.OPENAI_API_KEY) {
+      // Mandible zone: route through the model gateway (see llm.ts).
+      const { createOpenAI } = await import('@ai-sdk/openai');
+      return createOpenAI({
+        baseURL: process.env.OPENAI_BASE_URL,
+        apiKey: process.env.OPENAI_API_KEY,
+      })(resolveGatewayGroup(normalized));
+    }
     const { google } = await import('@ai-sdk/google');
-    return google(model.replace('google/', ''));
+    return google(normalized);
   }
 
   if (model.startsWith('glm') || model.startsWith('zai/')) {
