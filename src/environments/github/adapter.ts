@@ -10,6 +10,7 @@ import { registerEnvironment } from '../../core/environment-registry.js';
 import { matchesQuery, isClaimExpired } from '../../core/signal.js';
 import { validateSignalInput } from '../../core/validation.js';
 import { GitHubClient } from './client.js';
+import { createTokenProvider } from './token-provider.js';
 import type { GitHubEnvConfig, GitHubIssue, GitHubPullRequest, GitHubReview, GitHubReaction } from './types.js';
 import {
   defaultTypeMapper,
@@ -30,6 +31,12 @@ export class GitHubEnvironment implements SerializableEnvironment {
    * tokens never travel in serialized config, so the zone must be supplied
    * one via the host's secret delivery; override with [] for anonymous
    * public-repo access).
+   */
+  /**
+   * Declared secret names for remote deployment. Default: GITHUB_TOKEN for
+   * static-token mode (tokens never serialize, so the zone must be supplied
+   * one); empty for sts mode (the runtime OIDC exchange needs no tenant
+   * secret); override with [] for anonymous public-repo access.
    */
   readonly requiredSecrets: string[];
   private readonly config: GitHubEnvConfig;
@@ -66,10 +73,17 @@ export class GitHubEnvironment implements SerializableEnvironment {
   private initialized = false;
 
   constructor(config: GitHubEnvConfig) {
-    this.requiredSecrets = config.requiredSecrets ?? ['GITHUB_TOKEN'];
+    // STS mode needs no tenant secret: the zone's platform-injected OIDC
+    // token is exchanged for a short-lived GitHub token at runtime. Static
+    // mode declares GITHUB_TOKEN so the host's secret delivery supplies it.
+    this.requiredSecrets = config.requiredSecrets ?? (config.sts ? [] : ['GITHUB_TOKEN']);
     this.config = config;
     this.name = config.name ?? `gh:${config.owner}/${config.repo}`;
-    this.client = new GitHubClient(config);
+    const tokenProvider = createTokenProvider({
+      owner: config.owner, repo: config.repo,
+      token: config.token, sts: config.sts,
+    });
+    this.client = new GitHubClient(config, tokenProvider);
     this.typeMapper = config.typeMapper ?? defaultTypeMapper;
     this.payloadMapper = config.payloadMapper ?? defaultPayloadMapper;
     this.concentrationMapper = config.concentrationMapper ?? defaultConcentrationMapper;
@@ -591,21 +605,42 @@ export class GitHubEnvironment implements SerializableEnvironment {
     // Deliberately no token: serialized config travels in deploy requests
     // and the zone's workload spec. The deserializer reads GITHUB_TOKEN
     // from process.env, which the secrets delivery path supplies (ADR-009).
-    return {
+    // STS config (identity, endpoint) is not a secret and does travel; the
+    // OIDC credential it exchanges comes from the zone's runtime env.
+    const config: EnvironmentConfig = {
       type: 'github',
       name: this.name,
       owner: this.config.owner,
       repo: this.config.repo,
       pollInterval: this.config.pollInterval,
+      // NOTE: token intentionally omitted — never serialize secrets
     };
+    if (this.config.sts) {
+      config.sts = {
+        identity: this.config.sts.identity,
+        stsUrl: this.config.sts.stsUrl,
+        // oidcToken intentionally omitted — comes from runtime env
+      };
+    }
+    return config;
   }
 }
 
 // Self-register for deserialization
-registerEnvironment('github', (c) => new GitHubEnvironment({
-  owner: c.owner as string,
-  repo: c.repo as string,
-  token: (c.token as string) ?? process.env.GITHUB_TOKEN,
-  name: c.name,
-  pollInterval: c.pollInterval as number | undefined,
-}));
+registerEnvironment('github', (c) => {
+  const envConfig: GitHubEnvConfig = {
+    owner: c.owner as string,
+    repo: c.repo as string,
+    name: c.name,
+    pollInterval: c.pollInterval as number | undefined,
+  };
+  if (c.sts && typeof c.sts === 'object') {
+    const sts = c.sts as Record<string, unknown>;
+    envConfig.sts = {
+      identity: sts.identity as string,
+      stsUrl: sts.stsUrl as string | undefined,
+    };
+  }
+  // No token in serialized config — falls back to GITHUB_TOKEN env var via createTokenProvider
+  return new GitHubEnvironment(envConfig);
+});

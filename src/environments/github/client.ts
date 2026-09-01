@@ -2,6 +2,7 @@
 // PURPOSE: ETag caching, pagination via Link header, rate limit tracking
 
 import type { GitHubIssue, GitHubPullRequest, GitHubReview, GitHubReaction, GitHubEnvConfig } from './types.js';
+import type { TokenProvider } from './token-provider.js';
 
 export interface RateLimitInfo {
   remaining: number;
@@ -19,16 +20,16 @@ export class GitHubClient {
   private readonly baseUrl: string;
   private readonly owner: string;
   private readonly repo: string;
-  private readonly token: string | undefined;
+  private readonly tokenProvider: TokenProvider | undefined;
   private readonly labels: string[];
   private _etag: string | null = null;
   private _rateLimit: RateLimitInfo = { remaining: 5000, limit: 5000, reset: 0 };
 
-  constructor(config: GitHubEnvConfig) {
+  constructor(config: GitHubEnvConfig, tokenProvider?: TokenProvider) {
     this.baseUrl = (config.apiBase ?? 'https://api.github.com').replace(/\/$/, '');
     this.owner = config.owner;
     this.repo = config.repo;
-    this.token = config.token ?? process.env.GITHUB_TOKEN;
+    this.tokenProvider = tokenProvider;
     this.labels = config.labels ?? [];
   }
 
@@ -36,14 +37,15 @@ export class GitHubClient {
     return { ...this._rateLimit };
   }
 
-  private headers(extraHeaders?: Record<string, string>): Record<string, string> {
+  private async headers(extraHeaders?: Record<string, string>): Promise<Record<string, string>> {
     const h: Record<string, string> = {
       'Accept': 'application/vnd.github+json',
       'User-Agent': 'mandible-stigmergy',
       ...extraHeaders,
     };
-    if (this.token) {
-      h['Authorization'] = `Bearer ${this.token}`;
+    if (this.tokenProvider) {
+      const token = await this.tokenProvider.resolve();
+      if (token) h['Authorization'] = `Bearer ${token}`;
     }
     return h;
   }
@@ -92,7 +94,7 @@ export class GitHubClient {
       extraHeaders['If-None-Match'] = this._etag;
     }
 
-    const response = await fetch(url, { headers: this.headers(extraHeaders) });
+    const response = await fetch(url, { headers: await this.headers(extraHeaders) });
     this.updateRateLimit(response.headers);
 
     // 304 Not Modified — no changes
@@ -119,7 +121,7 @@ export class GitHubClient {
     // Handle pagination
     let nextUrl = this.parseNextLink(response.headers.get('link'));
     while (nextUrl) {
-      const pageResponse = await fetch(nextUrl, { headers: this.headers() });
+      const pageResponse = await fetch(nextUrl, { headers: await this.headers() });
       this.updateRateLimit(pageResponse.headers);
 
       if (!pageResponse.ok) break;
@@ -152,7 +154,7 @@ export class GitHubClient {
 
     const response = await fetch(url, {
       method: 'POST',
-      headers: this.headers({ 'Content-Type': 'application/json' }),
+      headers: await this.headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(payload),
     });
     this.updateRateLimit(response.headers);
@@ -174,7 +176,7 @@ export class GitHubClient {
 
     const response = await fetch(url, {
       method: 'PATCH',
-      headers: this.headers({ 'Content-Type': 'application/json' }),
+      headers: await this.headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ state: 'closed' }),
     });
     this.updateRateLimit(response.headers);
@@ -207,7 +209,7 @@ export class GitHubClient {
       extraHeaders['If-None-Match'] = this._prEtag;
     }
 
-    const response = await fetch(url, { headers: this.headers(extraHeaders) });
+    const response = await fetch(url, { headers: await this.headers(extraHeaders) });
     this.updateRateLimit(response.headers);
 
     if (response.status === 304) {
@@ -225,7 +227,7 @@ export class GitHubClient {
 
     let nextUrl = this.parseNextLink(response.headers.get('link'));
     while (nextUrl) {
-      const pageResponse = await fetch(nextUrl, { headers: this.headers() });
+      const pageResponse = await fetch(nextUrl, { headers: await this.headers() });
       this.updateRateLimit(pageResponse.headers);
       if (!pageResponse.ok) break;
       const pagePRs = await pageResponse.json() as GitHubPullRequest[];
@@ -238,7 +240,7 @@ export class GitHubClient {
 
   async fetchReviews(prNumber: number): Promise<GitHubReview[]> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/pulls/${prNumber}/reviews?per_page=100`;
-    const response = await fetch(url, { headers: this.headers() });
+    const response = await fetch(url, { headers: await this.headers() });
     this.updateRateLimit(response.headers);
 
     if (!response.ok) {
@@ -256,7 +258,7 @@ export class GitHubClient {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/labels`;
     const response = await fetch(url, {
       method: 'POST',
-      headers: this.headers({ 'Content-Type': 'application/json' }),
+      headers: await this.headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ labels: [label] }),
     });
     this.updateRateLimit(response.headers);
@@ -270,7 +272,7 @@ export class GitHubClient {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/labels/${encodeURIComponent(label)}`;
     const response = await fetch(url, {
       method: 'DELETE',
-      headers: this.headers(),
+      headers: await this.headers(),
     });
     this.updateRateLimit(response.headers);
 
@@ -282,7 +284,7 @@ export class GitHubClient {
 
   async getLabels(issueNumber: number): Promise<Array<{ name: string }>> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/labels`;
-    const response = await fetch(url, { headers: this.headers() });
+    const response = await fetch(url, { headers: await this.headers() });
     this.updateRateLimit(response.headers);
 
     if (!response.ok) {
@@ -299,7 +301,7 @@ export class GitHubClient {
   async fetchReactions(issueNumber: number): Promise<GitHubReaction[]> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/reactions?per_page=100`;
     const response = await fetch(url, {
-      headers: this.headers({ 'Accept': 'application/vnd.github.squirrel-girl-preview+json' }),
+      headers: await this.headers({ 'Accept': 'application/vnd.github.squirrel-girl-preview+json' }),
     });
     this.updateRateLimit(response.headers);
 

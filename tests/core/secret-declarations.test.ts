@@ -26,6 +26,11 @@ describe('secret declarations', () => {
     expect(JSON.stringify(env.serialize())).not.toContain('ghp_inline');
   });
 
+  it('GitHubEnvironment declares nothing in sts mode — the OIDC exchange needs no tenant secret', () => {
+    const env = new GitHubEnvironment({ owner: 'acme', repo: 'app', sts: { identity: 'mandible-bot' } });
+    expect(env.requiredSecrets).toEqual([]);
+  });
+
   it('GitHubEnvironment allows opting out for anonymous public-repo access', () => {
     const env = new GitHubEnvironment({ owner: 'acme', repo: 'app', requiredSecrets: [] });
     expect(env.requiredSecrets).toEqual([]);

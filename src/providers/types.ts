@@ -218,6 +218,15 @@ export interface StructuredOutputConfig<T = Record<string, unknown>, R = Record<
    */
   route: string | ((result: R, signal: Signal<T>) => SignalDeposit | SignalDeposit[]);
 
+  /**
+   * Route a model refusal to a signal instead of throwing.
+   * If a string, deposits that type with { reason, provider } as payload.
+   * If a function, maps the refusal to deposits.
+   * When unset, a refusal throws RefusalError — deliberately distinct
+   * from other errors so retry policies can decline to retry it.
+   */
+  refusalRoute?: string | ((reason: string, signal: Signal<T>) => SignalDeposit | SignalDeposit[]);
+
   autoWithdraw?: boolean;
 }
 

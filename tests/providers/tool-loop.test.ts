@@ -457,3 +457,147 @@ describe('built-in tools', () => {
     }
   });
 });
+
+// ── Governance: beforeToolCall guard and transcript ─────────
+
+describe('beforeToolCall guard', () => {
+  it('vetoes a tool call without executing it and feeds the denial to the model', async () => {
+    let executed = false;
+    const guardedTool: ToolDefinition = {
+      ...echoTool,
+      execute: async (args) => {
+        executed = true;
+        return `Echo: ${args.message}`;
+      },
+    };
+
+    mockFetch
+      .mockResolvedValueOnce(mockModelsResponse())
+      .mockResolvedValueOnce(mockChatResponse('Trying the tool...', [
+        makeToolCall('call_1', 'echo', { message: 'secret' }),
+      ]))
+      .mockResolvedValueOnce(mockChatResponse('Understood, stopping.'));
+
+    const seen: Array<{ tool: string; turn: number }> = [];
+    const handler = withToolLoop({
+      endpoint: 'http://localhost:8001',
+      tools: [guardedTool],
+      prompt: 'Test the guard',
+      beforeToolCall: (call) => {
+        seen.push({ tool: call.tool, turn: call.turn });
+        return { deny: 'echo is not permitted for this colony' };
+      },
+    });
+
+    const ctx = makeContext();
+    await handler(makeSignal(), ctx);
+
+    expect(executed).toBe(false);
+    expect(seen).toEqual([{ tool: 'echo', turn: 1 }]);
+
+    const result = ctx.deposits[0].payload as ToolLoopResult;
+    expect(result.deniedToolCalls).toBe(1);
+    expect(result.toolErrors).toHaveLength(0);
+    expect(result.transcript).toHaveLength(1);
+    expect(result.transcript[0].denied).toBe('echo is not permitted for this colony');
+    expect(result.transcript[0].result).toContain('Tool call denied');
+
+    // The denial went back to the model as the tool result
+    const secondChatBody = JSON.parse(mockFetch.mock.calls[2][1].body as string);
+    const toolMessage = secondChatBody.messages.find((m: any) => m.role === 'tool');
+    expect(toolMessage.content).toContain('echo is not permitted');
+  });
+
+  it('allows calls the guard does not deny', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockModelsResponse())
+      .mockResolvedValueOnce(mockChatResponse('Calling...', [
+        makeToolCall('call_1', 'echo', { message: 'hello' }),
+      ]))
+      .mockResolvedValueOnce(mockChatResponse('Done.'));
+
+    const handler = withToolLoop({
+      endpoint: 'http://localhost:8001',
+      tools: [echoTool],
+      prompt: 'Test pass-through',
+      beforeToolCall: () => undefined,
+    });
+
+    const ctx = makeContext();
+    await handler(makeSignal(), ctx);
+
+    const result = ctx.deposits[0].payload as ToolLoopResult;
+    expect(result.deniedToolCalls).toBe(0);
+    expect(result.transcript[0].denied).toBeUndefined();
+    expect(result.transcript[0].result).toBe('Echo: hello');
+  });
+
+  it('supports async guards', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockModelsResponse())
+      .mockResolvedValueOnce(mockChatResponse('Calling...', [
+        makeToolCall('call_1', 'echo', { message: 'hello' }),
+      ]))
+      .mockResolvedValueOnce(mockChatResponse('Done.'));
+
+    const handler = withToolLoop({
+      endpoint: 'http://localhost:8001',
+      tools: [echoTool],
+      prompt: 'Async guard',
+      beforeToolCall: async () => ({ deny: 'async veto' }),
+    });
+
+    const ctx = makeContext();
+    await handler(makeSignal(), ctx);
+
+    const result = ctx.deposits[0].payload as ToolLoopResult;
+    expect(result.deniedToolCalls).toBe(1);
+    expect(result.transcript[0].denied).toBe('async veto');
+  });
+});
+
+describe('transcript', () => {
+  it('records every call untruncated, in order, with per-call errors', async () => {
+    const longOutput = 'x'.repeat(5000);
+    const bigTool: ToolDefinition = {
+      ...echoTool,
+      function: { ...echoTool.function, name: 'big' },
+      execute: async () => longOutput,
+    };
+    const failTool: ToolDefinition = {
+      ...echoTool,
+      function: { ...echoTool.function, name: 'fail' },
+      execute: async () => { throw new Error('boom'); },
+    };
+
+    mockFetch
+      .mockResolvedValueOnce(mockModelsResponse())
+      .mockResolvedValueOnce(mockChatResponse('Calling both...', [
+        makeToolCall('call_1', 'big', { message: 'a' }),
+        makeToolCall('call_2', 'fail', { message: 'b' }),
+      ]))
+      .mockResolvedValueOnce(mockChatResponse('Done.'));
+
+    const events: Array<{ result: string; error?: string }> = [];
+    const handler = withToolLoop({
+      endpoint: 'http://localhost:8001',
+      tools: [bigTool, failTool],
+      prompt: 'Transcript test',
+      onToolCall: (call) => events.push({ result: call.result, error: call.error }),
+    });
+
+    const ctx = makeContext();
+    await handler(makeSignal(), ctx);
+
+    const result = ctx.deposits[0].payload as ToolLoopResult;
+    expect(result.transcript.map(r => r.tool)).toEqual(['big', 'fail']);
+    // Transcript is untruncated; the observability event is truncated
+    expect(result.transcript[0].result).toBe(longOutput);
+    expect(events[0].result.length).toBeLessThanOrEqual(1000);
+    // Errors attach to the call that failed, not to its neighbors
+    expect(result.transcript[0].error).toBeUndefined();
+    expect(events[0].error).toBeUndefined();
+    expect(result.transcript[1].error).toBe('boom');
+    expect(events[1].error).toBe('boom');
+  });
+});

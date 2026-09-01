@@ -169,10 +169,12 @@ export function withOpenCode<T = Record<string, unknown>>(
 
     ctx.log(`OpenCode session ${sessionId} created (agent=${agent}${model ? `, model=${model}` : ''})`);
 
+    const eventAbort = new AbortController();
+
     try {
-      // 6. Subscribe to events (fire-and-forget, errors swallowed)
+      // 6. Subscribe to events (cancelled in finally via eventAbort)
       if (onEvent) {
-        consumeEvents(client, onEvent).catch(() => {});
+        consumeEvents(client, onEvent, eventAbort.signal).catch(() => {});
       }
 
       // 7. Inject system prompt as noReply message
@@ -236,7 +238,10 @@ export function withOpenCode<T = Record<string, unknown>>(
         await ctx.withdraw(signal.id);
       }
     } finally {
-      // 12. Clean up session
+      // 12. Stop event stream before deleting session
+      eventAbort.abort();
+
+      // 13. Clean up session
       if (sessionId) {
         await client.session.delete({ path: { id: sessionId } }).catch(() => {});
       }
@@ -264,9 +269,11 @@ export function buildOpenCodeSystemPrompt(colonyName: string): string {
 async function consumeEvents(
   client: any,
   onEvent: (event: unknown) => void,
+  abortSignal: AbortSignal,
 ): Promise<void> {
   const events = await client.event.subscribe();
   for await (const event of events.stream) {
+    if (abortSignal.aborted) break;
     try { onEvent(event); } catch { /* swallow callback errors */ }
   }
 }

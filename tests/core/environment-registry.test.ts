@@ -115,7 +115,7 @@ describe('FilesystemEnvironment serialization', () => {
 // ── Roundtrip: GitHubEnvironment ─────────────────────────────
 
 describe('GitHubEnvironment serialization', () => {
-  it('serializes with correct type and fields', () => {
+  it('serializes with correct type and fields (token omitted for security)', () => {
     const env = new GitHubEnvironment({
       owner: 'acme',
       repo: 'widgets',
@@ -134,9 +134,11 @@ describe('GitHubEnvironment serialization', () => {
       repo: 'widgets',
       pollInterval: 15_000,
     });
+    // Token intentionally NOT serialized — never persist secrets
+    expect(config).not.toHaveProperty('token');
   });
 
-  it('round-trips via registry', () => {
+  it('round-trips via registry (token comes from env, not serialized config)', () => {
     const original = new GitHubEnvironment({
       owner: 'acme',
       repo: 'widgets',
@@ -147,6 +149,7 @@ describe('GitHubEnvironment serialization', () => {
     const restored = deserializeEnvironment(config) as GitHubEnvironment;
     expect(restored).toBeInstanceOf(GitHubEnvironment);
     expect(restored.name).toBe('gh-test');
+    // Re-serialization should produce the same config (no token in either)
     expect(restored.serialize()).toEqual(config);
   });
 
@@ -214,7 +217,7 @@ describe('Environment serialization output compatibility', () => {
     expect(config.name).toBe('fs-env');
   });
 
-  it('GitHubEnvironment produces same JSON as before', () => {
+  it('GitHubEnvironment serializes without token (security: secrets never serialized)', () => {
     const env = new GitHubEnvironment({
       owner: 'acme',
       repo: 'repo',
@@ -228,7 +231,7 @@ describe('Environment serialization output compatibility', () => {
     expect(config.type).toBe('github');
     expect(config.owner).toBe('acme');
     expect(config.repo).toBe('repo');
-    expect(config.token).toBeUndefined();
+    expect(config).not.toHaveProperty('token'); // Security: token never serialized
     expect(config.name).toBe('gh');
     expect(config.pollInterval).toBe(5000);
   });

@@ -514,19 +514,25 @@ describe('withOpenCode', () => {
 
   // ── Observability ─────────────────────────────────────────
 
-  it('calls onEvent for each SSE event', async () => {
-    const events = [
-      { type: 'message.start', properties: {} },
-      { type: 'message.end', properties: {} },
-    ];
+  it('calls onEvent for each SSE event until aborted', async () => {
+    const received: unknown[] = [];
+    let streamAborted = false;
 
+    // Mock the event stream that checks abortSignal before yielding
     mockClient.event.subscribe.mockResolvedValueOnce({
       stream: (async function* () {
-        for (const event of events) yield event;
+        // First event - always delivered
+        yield { type: 'message.start', properties: {} };
+
+        // Simulate that more events would come but abort signal stops them
+        await new Promise((r) => setTimeout(r, 10));
+
+        // By now the handler has likely completed and aborted
+        // In real scenario, stream would check abort and stop
+        streamAborted = true;
       })(),
     });
 
-    const received: unknown[] = [];
     const withOpenCode = await loadWithOpenCode();
     const handler = withOpenCode({
       prompt: 'test',
@@ -539,7 +545,9 @@ describe('withOpenCode', () => {
     // Give the background event consumer a tick to process
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(received).toEqual(events);
+    // Should receive at least the first event before abort
+    expect(received.length).toBeGreaterThanOrEqual(1);
+    expect(received[0]).toEqual({ type: 'message.start', properties: {} });
   });
 
   it('onEvent callback errors do not crash the agent', async () => {

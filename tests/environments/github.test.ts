@@ -20,7 +20,8 @@ import {
   computeDependencyBoosts,
 } from '../../src/environments/github/mapper.js';
 import type { GitHubIssue, GitHubPullRequest, GitHubReview, GitHubReaction, GitHubEnvConfig } from '../../src/environments/github/types.js';
-import type { Signal } from '../../src/core/types.js';
+import { deserializeEnvironment } from '../../src/core/environment-registry.js';
+import type { Signal, SerializableEnvironment } from '../../src/core/types.js';
 
 // ----------------------------------------------------------
 // Mock GitHub API Server
@@ -2240,5 +2241,67 @@ describe('GitHubEnvironment — backpressure watch', () => {
 
     // Should have received at least the initial signal
     expect(received.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ----------------------------------------------------------
+// Serialization & STS integration
+// ----------------------------------------------------------
+
+describe('GitHubEnvironment — serialization', () => {
+  it('serialize() does NOT include token (security fix)', () => {
+    const env = createEnv({ token: 'ghp_secret_token' });
+    const serialized = (env as unknown as SerializableEnvironment).serialize();
+    expect(serialized).not.toHaveProperty('token');
+    expect(serialized.type).toBe('github');
+    expect(serialized.owner).toBe('test');
+    expect(serialized.repo).toBe('repo');
+  });
+
+  it('serialize() includes sts config without oidcToken', () => {
+    const env = new GitHubEnvironment({
+      owner: 'my-org',
+      repo: 'my-repo',
+      sts: {
+        identity: 'mandible-colony',
+        oidcToken: 'should-not-be-serialized',
+        stsUrl: 'https://custom-sts.example.com',
+      },
+      apiBase: `http://localhost:${port}`,
+    });
+    const serialized = (env as unknown as SerializableEnvironment).serialize();
+    expect(serialized.type).toBe('github');
+    expect(serialized.sts).toBeDefined();
+    const sts = serialized.sts as Record<string, unknown>;
+    expect(sts.identity).toBe('mandible-colony');
+    expect(sts.stsUrl).toBe('https://custom-sts.example.com');
+    expect(sts).not.toHaveProperty('oidcToken');
+    expect(serialized).not.toHaveProperty('token');
+  });
+
+  it('round-trip serialize → deserialize with STS config works', () => {
+    const env = new GitHubEnvironment({
+      owner: 'my-org',
+      repo: 'my-repo',
+      sts: {
+        identity: 'mandible-colony',
+        stsUrl: 'https://custom-sts.example.com',
+      },
+    });
+    const serialized = (env as unknown as SerializableEnvironment).serialize();
+    const deserialized = deserializeEnvironment(serialized) as GitHubEnvironment;
+    expect(deserialized.name).toBe('gh:my-org/my-repo');
+    // Re-serialize should produce identical output
+    const reserialized = (deserialized as unknown as SerializableEnvironment).serialize();
+    expect(reserialized.sts).toEqual(serialized.sts);
+  });
+
+  it('throws when creating env with both token and sts', () => {
+    expect(() => new GitHubEnvironment({
+      owner: 'org',
+      repo: 'repo',
+      token: 'ghp_test',
+      sts: { identity: 'test' },
+    })).toThrow('cannot specify both token and sts');
   });
 });

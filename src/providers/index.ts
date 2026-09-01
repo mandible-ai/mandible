@@ -31,7 +31,13 @@ export type {
   ToolLoopResult,
   ToolCallEvent,
   TurnEvent,
+  BeforeToolCallEvent,
+  ToolCallVerdict,
+  ToolCallRecord,
 } from './tool-loop.js';
+
+// Refusals as a first-class outcome
+export { RefusalError, isRefusal } from './refusal.js';
 
 // qwen-code subprocess wrapper (local agentic coding)
 export { withQwenCode } from './qwen-code.js';

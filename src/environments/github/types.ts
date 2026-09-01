@@ -86,6 +86,28 @@ export type ConcentrationMapper = (issue: GitHubIssue, config: GitHubEnvConfig) 
 export type PRConcentrationMapper = (pr: GitHubPullRequest, reviews: GitHubReview[], config: GitHubEnvConfig) => number;
 
 // ----------------------------------------------------------
+// octo-sts token exchange
+// ----------------------------------------------------------
+
+/** OIDC token source — static string or async function for dynamic providers */
+export type OidcTokenSource = string | (() => string | Promise<string>);
+
+/** Configuration for octo-sts token exchange */
+export interface OctoStsConfig {
+  /** Trust policy identity name (matches .github/chainguard/{identity}.sts.yaml) */
+  identity: string;
+  /**
+   * OIDC token override. Usually not needed — auto-discovered from:
+   * 1. OIDC_TOKEN env var
+   * 2. GitHub Actions OIDC provider
+   * Use this escape hatch for custom identity providers.
+   */
+  oidcToken?: OidcTokenSource;
+  /** STS endpoint URL. Default: "https://octo-sts.dev" */
+  stsUrl?: string;
+}
+
+// ----------------------------------------------------------
 // GitHub Environment Config
 // ----------------------------------------------------------
 
@@ -107,6 +129,9 @@ export interface GitHubEnvConfig {
 
   /** GitHub personal access token. Defaults to GITHUB_TOKEN env var */
   token?: string;
+
+  /** octo-sts config for short-lived token exchange. Mutually exclusive with `token`. */
+  sts?: OctoStsConfig;
 
   /** Human-readable environment name. Defaults to "gh:{owner}/{repo}" */
   name?: string;

@@ -39,6 +39,7 @@ import type {
   LLMCallFunction,
   BedrockConfig,
 } from './types.js';
+import { RefusalError, isRefusal } from './refusal.js';
 
 /**
  * Creates an action handler that calls an LLM for structured output
@@ -59,6 +60,7 @@ export function withStructuredOutput<
     maxTokens = 4096,
     temperature = 0,
     route,
+    refusalRoute,
     autoWithdraw = true,
     bedrockConfig,
   } = config;
@@ -77,21 +79,43 @@ export function withStructuredOutput<
     // 3. Call the LLM
     let result: R;
 
-    if (typeof provider === 'function') {
-      // Custom provider function
-      result = await (provider as LLMCallFunction<R>)(fullPrompt, {
-        systemPrompt,
-        maxTokens,
-        temperature,
-      });
-    } else {
-      result = await callProvider(provider, model, fullPrompt, {
-        systemPrompt,
-        maxTokens,
-        temperature,
-        schema,
-        bedrockConfig,
-      });
+    try {
+      if (typeof provider === 'function') {
+        // Custom provider function
+        result = await (provider as LLMCallFunction<R>)(fullPrompt, {
+          systemPrompt,
+          maxTokens,
+          temperature,
+        });
+      } else {
+        result = await callProvider(provider, model, fullPrompt, {
+          systemPrompt,
+          maxTokens,
+          temperature,
+          schema,
+          bedrockConfig,
+        });
+      }
+    } catch (err) {
+      // A refusal is an outcome, not a defect. With refusalRoute configured
+      // it becomes a signal other colonies can react to; without it, the
+      // typed error propagates so retry policies can decline to retry.
+      if (isRefusal(err) && refusalRoute) {
+        ctx.log(`Model refused (${err.provider}): ${err.reason}`, 'warn');
+        const deposits = resolveRefusalRoute(refusalRoute, err, signal);
+        for (const deposit of deposits) {
+          await ctx.deposit(deposit.type, deposit.payload ?? { reason: err.reason, provider: err.provider }, {
+            causedBy: [signal.id],
+            tags: deposit.tags,
+            ttl: deposit.ttl,
+          });
+        }
+        if (autoWithdraw) {
+          await ctx.withdraw(signal.id);
+        }
+        return;
+      }
+      throw err;
     }
 
     // 4. Validate against schema if provided
@@ -185,6 +209,10 @@ async function callAnthropic<R>(
       .map((block: any) => block.text)
       .join('');
 
+    if ((response as any).stop_reason === 'refusal') {
+      throw new RefusalError(text || 'stop_reason=refusal', 'anthropic');
+    }
+
     return parseJsonResponse<R>(text);
   } catch (err: any) {
     if (err.code === 'MODULE_NOT_FOUND' || err.code === 'ERR_MODULE_NOT_FOUND') {
@@ -237,6 +265,10 @@ async function callBedrock<R>(
       .map((block: any) => block.text)
       .join('');
 
+    if (response.stop_reason === 'refusal') {
+      throw new RefusalError(text || 'stop_reason=refusal', 'bedrock');
+    }
+
     return parseJsonResponse<R>(text);
   } catch (err: any) {
     if (err.code === 'MODULE_NOT_FOUND' || err.code === 'ERR_MODULE_NOT_FOUND') {
@@ -273,7 +305,11 @@ async function callOpenAI<R>(
       response_format: { type: 'json_object' },
     });
 
-    const text = response.choices[0]?.message?.content ?? '{}';
+    const choice = response.choices[0] as any;
+    if (choice?.finish_reason === 'content_filter') {
+      throw new RefusalError(choice.message?.content ?? 'finish_reason=content_filter', 'openai');
+    }
+    const text = choice?.message?.content ?? '{}';
     return parseJsonResponse<R>(text);
   } catch (err: any) {
     if (err.code === 'MODULE_NOT_FOUND' || err.code === 'ERR_MODULE_NOT_FOUND') {
@@ -439,5 +475,17 @@ function resolveRoute<T, R>(
   }
 
   const mapped = route(result, signal);
+  return Array.isArray(mapped) ? mapped : [mapped];
+}
+
+function resolveRefusalRoute<T, R>(
+  refusalRoute: NonNullable<StructuredOutputConfig<T, R>['refusalRoute']>,
+  refusal: RefusalError,
+  signal: Signal<T>
+): SignalDeposit[] {
+  if (typeof refusalRoute === 'string') {
+    return [{ type: refusalRoute, payload: { reason: refusal.reason, provider: refusal.provider } }];
+  }
+  const mapped = refusalRoute(refusal.reason, signal);
   return Array.isArray(mapped) ? mapped : [mapped];
 }
