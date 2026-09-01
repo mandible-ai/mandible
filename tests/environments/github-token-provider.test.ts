@@ -318,3 +318,27 @@ describe('createTokenProvider', () => {
     expect(provider).toBeUndefined();
   });
 });
+
+describe('env-sourced token rotation', () => {
+  it('re-reads GITHUB_TOKEN from env on every resolve', async () => {
+    // Zone secret rotation (refreshSecretsIntoEnv) replaces env values at
+    // runtime; an env-sourced provider must serve the rotated token without
+    // a colony restart.
+    process.env.GITHUB_TOKEN = 'ghp_before_rotation';
+    const provider = createTokenProvider({ owner: 'acme', repo: 'app' });
+    expect(provider).toBeDefined();
+    expect(await provider!.resolve()).toBe('ghp_before_rotation');
+
+    process.env.GITHUB_TOKEN = 'ghp_after_rotation';
+    expect(await provider!.resolve()).toBe('ghp_after_rotation');
+    delete process.env.GITHUB_TOKEN;
+  });
+
+  it('an explicit config token stays pinned — rotation applies to env sourcing only', async () => {
+    process.env.GITHUB_TOKEN = 'ghp_env';
+    const provider = createTokenProvider({ owner: 'acme', repo: 'app', token: 'ghp_pinned' });
+    process.env.GITHUB_TOKEN = 'ghp_env_rotated';
+    expect(await provider!.resolve()).toBe('ghp_pinned');
+    delete process.env.GITHUB_TOKEN;
+  });
+});

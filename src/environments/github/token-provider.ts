@@ -21,6 +21,21 @@ export class StaticTokenProvider implements TokenProvider {
 }
 
 // ----------------------------------------------------------
+// EnvTokenProvider — reads GITHUB_TOKEN from env on every resolve
+// ----------------------------------------------------------
+
+/**
+ * Env-sourced tokens are read lazily so rotation propagates: Mandible zones
+ * replace env values at runtime when a declared secret rotates
+ * (refreshSecretsIntoEnv), and a snapshot taken at construction would keep
+ * serving the revoked value until restart.
+ */
+export class EnvTokenProvider implements TokenProvider {
+  constructor(private readonly variable: string = 'GITHUB_TOKEN') {}
+  async resolve(): Promise<string> { return process.env[this.variable] ?? ''; }
+}
+
+// ----------------------------------------------------------
 // OctoStsTokenProvider — exchanges OIDC token for GitHub installation token
 // ----------------------------------------------------------
 
@@ -132,7 +147,6 @@ export function createTokenProvider(config: {
   }
   if (config.token) return new StaticTokenProvider(config.token);
   if (config.sts) return new OctoStsTokenProvider(config.owner, config.repo, config.sts);
-  const envToken = process.env.GITHUB_TOKEN;
-  if (envToken) return new StaticTokenProvider(envToken);
+  if (process.env.GITHUB_TOKEN) return new EnvTokenProvider('GITHUB_TOKEN');
   return undefined;
 }
