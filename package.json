@@ -74,7 +74,8 @@
     "test": "vitest",
     "test:coverage": "vitest run --coverage",
     "demo:repo-maintenance": "tsx src/cli/index.ts dev examples/repo-maintenance/mandible.config.ts",
-    "demo:model-routing": "tsx examples/model-routing/index.ts"
+    "demo:model-routing": "tsx examples/model-routing/index.ts",
+    "demo:coordination": "tsx examples/coordination/index.ts"
   },
   "dependencies": {
     "@inquirer/prompts": "^7.0.0",

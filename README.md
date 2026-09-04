@@ -130,9 +130,12 @@ Same colonies, same environment, different host.
 
 ### Run with the dashboard
 
-The fastest way to see colonies in action is the CLI:
+The fastest way to see colonies in action is the CLI. Scaffold a project, then run it:
 
 ```bash
+mandible init                                          # interactive: name, environment (filesystem | dolt | github)
+mandible dev mandible.config.ts                        # start colonies + dashboard
+
 mandible dev examples/repo-maintenance/mandible.config.ts
 ```
 
@@ -285,6 +288,13 @@ Action providers wrap external capabilities into a standard interface for colony
 | `withBash` | Build commands, test runners, linters | Shell execution |
 | `withModelRouter` | Pick a provider/model per signal from marks in the environment | Any of the above |
 | `withClassifier` | Leave `complexity:*` / `kind:*` marks on unlabeled tasks | Anthropic, OpenAI, Vercel AI SDK |
+| `withLLM` | Summaries, prose, open-ended text (no schema) | Anthropic, OpenAI, Bedrock, Gemini, Vercel AI SDK |
+| `withSkill` | Colonies driven by markdown skill files | Any LLM provider |
+| `withOpenCode` | Provider-agnostic agentic coding | OpenCode SDK |
+| `withOpenHands` | Sandboxed agentic coding for CI/DevOps | OpenHands self-hosted API |
+| `withToolLoop` | Agentic tool-calling loop on local models | vLLM (OpenAI-compatible) |
+| `withQwenCode` | Quick local agentic coding tasks | Qwen Code CLI |
+| `vllmProvider` / `vllmStructuredProvider` | Local text / JSON generation plugged into `withLLM` / `withStructuredOutput` | vLLM |
 
 `withClaudeCode` is fully wired to the Claude Code SDK — colonies spawn real agent sessions that read files, write code, and run commands. It supports **AWS Bedrock routing** via the `bedrock` config option for enterprise deployments.
 
@@ -317,7 +327,9 @@ colony('worker')
 
 The router leaves `route:<name>` on the signal it dispatches and `escalation:<n>` when a handler fails, so the next retry routes higher and downstream colonies can see which tier produced an artifact. `withClassifier` runs only when nothing else has marked the task, and never twice.
 
-See [Action Providers](docs/how-to/action-providers.md) for configuration, output mapping, and context assembly, and [Model Routing](docs/how-to/model-routing.md) for aliases, routing, classification, and a runnable demo (`npm run demo:model-routing`).
+Inside a Mandible Cloud zone, Gemini provider calls route through the zone's model gateway: bare Gemini model names resolve to the gateway's model groups (`MANDIBLE_MODEL_GROUPS`), so a colony written against `gemini-3.7-flash` runs unchanged whether the group is platform-provided or BYO, and the tenant's real provider key never enters the zone.
+
+See [Action Providers](docs/how-to/action-providers.md) for configuration, output mapping, and context assembly, [Model Routing](docs/how-to/model-routing.md) for aliases, routing, classification, and a runnable demo (`npm run demo:model-routing`), and [Local Inference Providers](docs/how-to/local-inference-providers.md) for running colonies entirely on local hardware with vLLM.
 
 ## Signal types
 
@@ -370,9 +382,26 @@ const env = new GitHubEnvironment({
 });
 ```
 
-### Dolt (stubbed)
+### Dolt (implemented)
 
-[Dolt](https://www.dolthub.com/) is a SQL database with Git-like versioning. Signals become rows, branching enables parallel work, and `dolt_history` provides queryable time travel for the full signal history.
+[Dolt](https://www.dolthub.com/) is a SQL database with Git-like versioning. Signals become rows in a [DoltHub](https://www.dolthub.com/)-hosted database via its HTTP API — no local server, no drivers. Branching gives colonies isolation; diff and merge give critics and keepers a review flow.
+
+```typescript
+import { DoltEnvironment } from '@mandible-ai/mandible';
+
+const env = new DoltEnvironment({
+  owner: 'my-org',
+  database: 'colony-signals',
+  branch: 'main',
+  token: process.env.DOLTHUB_TOKEN,
+});
+
+await env.createBranch('feature/auth');                        // shaper works here
+const changed = await env.diffBranch('main', 'feature/auth');  // critic reviews
+await env.mergeBranch('feature/auth', 'main');                 // keeper merges
+```
+
+See [Dolt Environment](docs/how-to/dolt-environment.md) for setup, the schema mapping, and branching patterns.
 
 ### Writing your own
 
@@ -411,7 +440,48 @@ Built-in hosts: `local()` (in-process), `docker()` (containers). Cloud hosts liv
 
 ## Patterns
 
-Reusable coordination patterns built on top of the core primitives. See [Bridging Signals](docs/how-to/bridge-signals.md) and [Monitoring Trust](docs/how-to/monitor-trust.md) for detailed usage.
+Reusable coordination patterns built on top of the core primitives. See [Ordered Work](docs/how-to/coordination.md), [Bridging Signals](docs/how-to/bridge-signals.md), and [Monitoring Trust](docs/how-to/monitor-trust.md) for detailed usage.
+
+### Gate
+
+Ordered phases without a scheduler. A gated signal sits at **concentration 0** — present in the environment but invisible to every sensor that filters on `minConcentration` — until its preconditions exist (or have been withdrawn, i.e. completed). Then the gate activates it.
+
+```typescript
+import { createGate } from '@mandible-ai/mandible';
+
+const gate = createGate({ environment: env });
+await gate.start();
+
+await gate.deposit({
+  type: 'phase:review',
+  payload: { sprint: 'S1' },
+  preconditions: [authTask.id, dbTask.id],
+  preconditionMode: 'withdrawn',   // wait for both tasks to be *finished*
+});
+```
+
+### Barrier
+
+Fan-in. Watch for N signals matching a query, then deposit one downstream signal that lists all of them as `caused_by`. Supports TTL with a timeout signal, `withdrawTriggers`, and repeatable mode.
+
+```typescript
+import { createBarrier } from '@mandible-ai/mandible';
+
+const quorum = createBarrier({
+  environment: env,
+  name: 'review-quorum',
+  trigger: { type: 'review:*', tags: ['approved'] },
+  threshold: 2,
+  then: { type: 'phase:merge-ready', payload: (reviews) => ({ approvedBy: reviews.map(r => r.meta.deposited_by) }) },
+  ttl: 30 * 60_000,
+  onTimeout: { type: 'review:stalled', payload: (r) => ({ received: r.length, needed: 2 }) },
+});
+await quorum.start();
+```
+
+### Signal enrichment
+
+Annotate the signal you're holding instead of replacing it: `ctx.enrich(id, { tags, payload })` merges payload fields, replaces tags, keeps the ID and lineage. See [Signal Enrichment](docs/how-to/signal-enrichment.md).
 
 ### SignalBridge
 
@@ -466,7 +536,8 @@ await sentinel.start();
 ```
 src/
   cli/
-    index.ts            CLI entry point — `mandible dev`
+    index.ts            CLI entry point — `mandible init` | `mandible dev`
+    init.ts             Interactive project scaffolding (mandible.config.ts)
     server.ts           Dashboard HTTP + WebSocket server
     dashboard.html      Live dashboard UI
   cloud/
@@ -482,7 +553,7 @@ src/
   environments/
     filesystem/         Filesystem adapter (JSON files + atomic claims)
     github/             GitHub adapter (issues, PRs, comments, labels as signals)
-    dolt/               Dolt adapter (stub)
+    dolt/               Dolt adapter (DoltHub HTTP API, branching, optional mysql2)
   hosts/
     local.ts            LocalHost — runs colonies in current process
     docker.ts           DockerHost — runs colonies as Docker containers
@@ -493,18 +564,28 @@ src/
     models.ts           Model tier aliases (fable/opus/sonnet/haiku → latest IDs)
     model-router.ts     withModelRouter — signal-driven routing with trail + escalation
     classifier.ts       withClassifier — marks unlabeled tasks for routing
+    llm.ts              withLLM — plain-text generation; zone gateway model-group resolution
+    skill.ts            withSkill — markdown skill files as colony behavior
+    opencode.ts         withOpenCode — OpenCode SDK agentic coding
+    openhands.ts        withOpenHands — OpenHands sandboxed agentic coding
+    tool-loop.ts        withToolLoop — tool-calling loop against local vLLM
+    qwen-code.ts        withQwenCode — Qwen Code CLI subprocess wrapper
+    vllm.ts             vllmProvider / vllmStructuredProvider — local inference
     context.ts          Context assembly from signal lineage
   patterns/
     bridge.ts           SignalBridge — cross-environment mirroring with attestation
     debug-bridge.ts     DebugBridge — signal server → environment gate
     sentinel.ts         Sentinel — trust monitoring and violation reporting
+    gate.ts             SignalGate — concentration gating for ordered phases
+    barrier.ts          SignalBarrier — fan-in convergence of N signals
 
 tests/
   cli/                  Dashboard server, resolveEnvironments tests
   core/                 Signal, runtime, attestation tests
-  environments/         Filesystem, GitHub adapter tests
+  environments/         Filesystem, GitHub, Dolt adapter tests
+  patterns/             Gate, barrier, debug-bridge tests
   dsl/                  DSL and mandible() builder tests
-  providers/            Agent, structured output, bash provider tests
+  providers/            Claude Code, structured output, LLM, Gemini, Bedrock, vLLM, tool loop, OpenCode, OpenHands, skill tests
   colonies/             Integration tests for colony workflows
 
 docs/
@@ -514,6 +595,10 @@ docs/
     model-routing.md    Model aliases, dynamic model, withModelRouter, withClassifier
     monitor-trust.md    Sentinel pattern + trust policies
     custom-environment.md Implementing the Environment interface
+    coordination.md     Gates and barriers for ordered work
+    signal-enrichment.md ctx.enrich() and Environment.update()
+    dolt-environment.md DoltHub setup, schema mapping, branching patterns
+    local-inference-providers.md vLLM, tool loop, qwen-code, OpenCode for local models
 
 examples/
   code-pipeline/
@@ -521,6 +606,7 @@ examples/
     index.ts            Local host — runs in current process
     docker.ts           Docker host — runs as containers
     with-providers.ts   Real LLM providers (Claude Code, Anthropic, Bash)
+  coordination/         Gate + barrier ordering demo (no LLM)
   repo-maintenance/     Scout + Fixer repo maintenance demo
   model-routing/        Classifier + router + escalation + lineage, faked LLM
 ```
@@ -570,22 +656,34 @@ No API keys needed — the LLM is faked so you can watch the *routing* happen. A
 npm run demo:model-routing
 ```
 
+### Coordination
+
+Gate + barrier, no LLM. Three workers finish; a barrier folds their results into one `batch:complete`; a gate holds `phase:report` at concentration 0 until every job is withdrawn, then releases it.
+
+```bash
+npm run demo:coordination
+```
+
 ## Roadmap
 
 - [x] `mandible dev` CLI + live dashboard
 - [x] `withClaudeCode` wired to Claude Code SDK
-- [x] Test suite (473 tests, 95%+ coverage)
+- [x] Test suite (900+ tests, 95%+ coverage)
 - [x] GitHub environment adapter
 - [x] `mandible()` DSL with Host/Environment separation
 - [x] `local()` and `docker()` host implementations
 - [x] `@mandible-ai/cloud` — run colonies in isolation using microVMs via Mandible Cloud
+- [x] `mandible init` project scaffolding
+- [x] Local inference providers (vLLM, tool loop, qwen-code, OpenCode, OpenHands)
 - [ ] `create-mandible` starter template
 - [ ] Dashboard GIF + landing page
 - [x] Model aliases, stigmergic model routing, classifier
 - [ ] Budget-aware routing (`byBudget`)
 - [ ] Dolt full implementation
+- [x] Dolt environment (DoltHub HTTP API, branching)
+- [x] Gates and barriers for ordered work
 - [ ] CloudEvents bridge adapter
-- [ ] Colony scaler
+- [x] Colony scaler (`.autoscale()`)
 - [ ] Trust enforcement
 - [ ] Hosted observability platform
 
