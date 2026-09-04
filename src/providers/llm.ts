@@ -61,7 +61,9 @@ export function withLLM<T = Record<string, unknown>>(
 
     // 1b. Append format instruction when format is set
     if (format === 'markdown') {
-      resolvedPrompt += '\n\nRespond using well-structured markdown.';
+      resolvedPrompt +=
+        '\n\nRespond with raw, well-structured Markdown only. ' +
+        'Do not JSON-encode it or wrap it in quotes or a code fence.';
     }
 
     // 2. Call the LLM
@@ -80,6 +82,9 @@ export function withLLM<T = Record<string, unknown>>(
         temperature,
         bedrockConfig,
       });
+    }
+    if (format === 'markdown') {
+      text = unwrapJsonString(text);
     }
 
     // 3. Route to signal deposits
@@ -407,4 +412,27 @@ function resolveTextRoute<T>(
 
   const mapped = route(text, signal);
   return Array.isArray(mapped) ? mapped : [mapped];
+}
+
+/**
+ * Some OpenAI-compatible model gateways return requested Markdown as a JSON
+ * string literal, including wrapping quotes and escaped newlines. Decode only
+ * that narrow shape so ordinary Markdown and non-string JSON stay untouched.
+ */
+function unwrapJsonString(text: string): string {
+  const trimmed = text.trim();
+  if (
+    !trimmed.startsWith('"') ||
+    !trimmed.endsWith('"') ||
+    (!trimmed.includes('\\n') && !trimmed.includes('\\r'))
+  ) {
+    return text;
+  }
+
+  try {
+    const decoded: unknown = JSON.parse(trimmed);
+    return typeof decoded === 'string' ? decoded : text;
+  } catch {
+    return text;
+  }
 }
