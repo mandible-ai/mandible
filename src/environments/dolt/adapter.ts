@@ -442,7 +442,7 @@ export class DoltEnvironment implements SerializableEnvironment {
     const { rows } = await this.client.query(
       `SELECT * FROM dolt_diff('signals', ${sqlValue(branch1)}, ${sqlValue(branch2)})`,
     );
-    return rows.map(rowToSignal);
+    return rows.map(diffRowToSignal);
   }
 }
 
@@ -483,6 +483,25 @@ function rowToSignal(row: Record<string, unknown>): Signal {
       tags: (parseJSON(row.tags) as string[] | undefined) ?? undefined,
     },
   };
+}
+
+/**
+ * Dolt's diff table prefixes values with `from_` and `to_`.
+ * Return the new row for additions/modifications and the old row for removals.
+ */
+function diffRowToSignal(row: Record<string, unknown>): Signal {
+  const prefix = row.diff_type === 'removed' ? 'from_' : 'to_';
+  if (!(prefix + 'id' in row)) {
+    return rowToSignal(row);
+  }
+
+  const signalRow: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (key.startsWith(prefix)) {
+      signalRow[key.slice(prefix.length)] = value;
+    }
+  }
+  return rowToSignal(signalRow);
 }
 
 /**

@@ -175,6 +175,40 @@ describe('createBarrier', () => {
     await barrier.stop();
   });
 
+  it('does not reuse active triggers in repeatable mode', async () => {
+    const barrier = createBarrier({
+      environment: env,
+      name: 'repeatable-active-triggers',
+      trigger: 'tick',
+      threshold: 1,
+      then: { type: 'tock', payload: {} },
+      repeatable: true,
+      pollInterval: 50,
+    });
+
+    await barrier.start();
+
+    await env.deposit({
+      type: 'tick',
+      payload: { round: 1 },
+      meta: { deposited_by: 'clock' },
+    });
+
+    await new Promise(r => setTimeout(r, 175));
+    expect(barrier.stats.fired).toBe(1);
+
+    await env.deposit({
+      type: 'tick',
+      payload: { round: 2 },
+      meta: { deposited_by: 'clock' },
+    });
+
+    await new Promise(r => setTimeout(r, 125));
+    expect(barrier.stats.fired).toBe(2);
+
+    await barrier.stop();
+  });
+
   it('withdraws trigger signals when configured', async () => {
     const barrier = createBarrier({
       environment: env,

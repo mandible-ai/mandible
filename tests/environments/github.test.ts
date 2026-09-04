@@ -144,6 +144,7 @@ let mockPRs: import('../../src/environments/github/types.js').GitHubPullRequest[
 let mockReviewsByPR: Map<number, import('../../src/environments/github/types.js').GitHubReview[]> = new Map();
 let mockLabelsAdded: Array<{ number: number; label: string }> = [];
 let mockLabelsRemoved: Array<{ number: number; label: string }> = [];
+let mockLabelsSet: Array<{ number: number; labels: string[] }> = [];
 let mockReactionsByIssue: Map<number, GitHubReaction[]> = new Map();
 
 const rateLimitHeaders = {
@@ -160,6 +161,7 @@ function setMockIssues(issues: GitHubIssue[], etag?: string): void {
   mockReactionsByIssue = new Map();
   mockLabelsAdded = [];
   mockLabelsRemoved = [];
+  mockLabelsSet = [];
   let issueEtag = etag ?? `"etag-issues-${Date.now()}"`;
   let prEtag = `"etag-prs-${Date.now()}"`;
 
@@ -178,6 +180,20 @@ function setMockIssues(issues: GitHubIssue[], etag?: string): void {
         }
         res.writeHead(200, { 'Content-Type': 'application/json', ...rateLimitHeaders });
         res.end(JSON.stringify(parsed.labels.map((l: string) => ({ name: l }))));
+      });
+      return;
+    }
+
+    // PUT labels
+    if (req.method === 'PUT' && url.match(/\/issues\/\d+\/labels$/)) {
+      const num = parseInt(url.match(/\/issues\/(\d+)\/labels$/)![1], 10);
+      let body = '';
+      req.on('data', (chunk: Buffer) => { body += chunk; });
+      req.on('end', () => {
+        const parsed = JSON.parse(body) as { labels: string[] };
+        mockLabelsSet.push({ number: num, labels: parsed.labels });
+        res.writeHead(200, { 'Content-Type': 'application/json', ...rateLimitHeaders });
+        res.end(JSON.stringify(parsed.labels.map(name => ({ name }))));
       });
       return;
     }
@@ -1026,6 +1042,42 @@ describe('GitHubEnvironment — update', () => {
     });
 
     expect(updated.meta.tags).toEqual(['new-tag', 'important']);
+    expect(mockLabelsSet).toEqual([
+      { number: 1, labels: ['new-tag', 'important'] },
+    ]);
+  });
+
+  it('preserves a persistent claim label when updating tags', async () => {
+    setMockIssues([makeIssue({
+      number: 1,
+      labels: [{ name: 'mandible:claimed:triage' }],
+    })]);
+    const env = createEnv({ persistentClaims: true });
+    await env.sync();
+
+    const updated = await env.update('gh:test/repo#1', {
+      meta: { tags: ['reviewed'] },
+    });
+
+    expect(updated.meta.tags).toEqual(['reviewed']);
+    expect(mockLabelsSet).toEqual([
+      { number: 1, labels: ['reviewed', 'mandible:claimed:triage'] },
+    ]);
+  });
+
+  it('skips the API call when tags are unchanged', async () => {
+    setMockIssues([makeIssue({
+      number: 1,
+      labels: [{ name: 'reviewed' }],
+    })]);
+    const env = createEnv();
+    await env.sync();
+
+    await env.update('gh:test/repo#1', {
+      meta: { tags: ['reviewed'] },
+    });
+
+    expect(mockLabelsSet).toEqual([]);
   });
 
   it('updates concentration', async () => {

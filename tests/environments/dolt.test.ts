@@ -17,6 +17,9 @@ let fetchMock: ReturnType<typeof vi.fn<FetchFn>>;
 /** Captured SQL queries from write requests (for assertion) */
 let capturedQueries: string[] = [];
 
+/** Rows returned by the mock dolt_diff table function */
+let diffRows: Record<string, unknown>[] = [];
+
 /** In-memory signal store backing the mock */
 let signalStore: Record<string, Record<string, unknown>>;
 
@@ -81,6 +84,14 @@ function setupRealisticMock() {
 
 function handleReadQuery(sql: string): Response {
   const upper = sql.toUpperCase();
+
+  if (upper.includes('FROM DOLT_DIFF')) {
+    return makeResponse({
+      query_execution_status: 'Success',
+      rows: diffRows,
+      schema: [],
+    });
+  }
 
   if (upper.includes('FROM SIGNALS')) {
     const allSignals = Object.values(signalStore);
@@ -392,6 +403,7 @@ beforeEach(() => {
   globalThis.fetch = fetchMock;
   signalStore = {};
   capturedQueries = [];
+  diffRows = [];
 
   setupRealisticMock();
 
@@ -886,6 +898,51 @@ describe('history', () => {
 
     const limited = await env.history({ limit: 2 });
     expect(limited).toHaveLength(2);
+  });
+});
+
+// ── branch diffs ────────────────────────────────────────────
+
+describe('diffBranch', () => {
+  it('maps added, modified, and removed Dolt diff rows to signals', async () => {
+    const base = {
+      type: 'task:ready',
+      payload: '{"name":"task"}',
+      deposited_at: 1,
+      deposited_by: 'test',
+      concentration: 1,
+      ttl: null,
+      claimed_by: null,
+      claimed_at: null,
+      claim_lease: null,
+      caused_by: null,
+      tags: '["reviewed"]',
+    };
+    diffRows = [
+      Object.fromEntries([
+        ...Object.entries({ id: 'sig_added', ...base }).map(([key, value]) => [`to_${key}`, value]),
+        ['diff_type', 'added'],
+      ]),
+      Object.fromEntries([
+        ...Object.entries({ id: 'sig_modified', ...base, payload: '{"name":"updated"}' })
+          .map(([key, value]) => [`to_${key}`, value]),
+        ['diff_type', 'modified'],
+      ]),
+      Object.fromEntries([
+        ...Object.entries({ id: 'sig_removed', ...base }).map(([key, value]) => [`from_${key}`, value]),
+        ['diff_type', 'removed'],
+      ]),
+    ];
+
+    const result = await env.diffBranch('main', 'feature/review');
+
+    expect(result.map(signal => signal.id)).toEqual([
+      'sig_added',
+      'sig_modified',
+      'sig_removed',
+    ]);
+    expect(result[1].payload).toEqual({ name: 'updated' });
+    expect(result[2].meta.tags).toEqual(['reviewed']);
   });
 });
 

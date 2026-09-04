@@ -70,7 +70,15 @@ export type {
 
 // qwen-code subprocess wrapper (local agentic coding)
 export { withQwenCode } from './qwen-code.js';
-export type { QwenCodeConfig, QwenCodeResult } from './qwen-code.js';
+export type {
+  QwenCodeConfig,
+  QwenCodeResult,
+  QwenMessage,
+  QwenUsage,
+  QwenApprovalMode,
+  QwenOutputFormat,
+  QwenStopReason,
+} from './qwen-code.js';
 
 // OpenCode agent wrapper (provider-agnostic agentic coding)
 export { withOpenCode } from './opencode.js';

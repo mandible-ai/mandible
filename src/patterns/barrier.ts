@@ -156,6 +156,8 @@ export function createBarrier(config: BarrierConfig): SignalBarrier {
 
   // Accumulated trigger signals (by ID to prevent duplicates)
   const accumulatedMap = new Map<string, Signal>();
+  // Keep IDs across repeatable rounds so active triggers cannot fire again.
+  const consumedTriggerIds = new Set<string>();
 
   const stats: BarrierStats = { accumulated: 0, fired: 0, expired: 0, errors: 0 };
 
@@ -175,10 +177,15 @@ export function createBarrier(config: BarrierConfig): SignalBarrier {
 
       // Observe trigger signals
       const signals = await env.observe(triggerQuery);
+      const activeTriggerIds = new Set(signals.map(signal => signal.id));
+      for (const signalId of consumedTriggerIds) {
+        if (!activeTriggerIds.has(signalId)) consumedTriggerIds.delete(signalId);
+      }
 
       // Add new signals to accumulated set
       for (const signal of signals) {
-        if (!accumulatedMap.has(signal.id)) {
+        if (!consumedTriggerIds.has(signal.id)) {
+          consumedTriggerIds.add(signal.id);
           accumulatedMap.set(signal.id, signal);
         }
       }
