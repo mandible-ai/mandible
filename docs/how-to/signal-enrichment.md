@@ -55,7 +55,7 @@ Decay lowers every signal's concentration over time. For workflows built on enri
 colony('triage').decay(false)
 ```
 
-Decay is per colony; other colonies in the same environment keep their sweeps.
+Decay scheduling is per colony, but each sweep operates on the shared environment. If several colonies use the same environment, disable decay on every runtime whose sweep could affect these long-lived signals.
 
 ## Where it's used
 

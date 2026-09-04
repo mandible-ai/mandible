@@ -44,7 +44,7 @@ The environment implements everything a colony needs — `observe`, `deposit`, `
 | Enrich | `UPDATE` of payload (merged) and tags (replaced) |
 | Decay | Three statements: release expired claims, evaporate below floor / past TTL, lower concentrations |
 | Watch | Poll `observe()` and emit signals not seen before |
-| History | `SELECT … WHERE withdrawn = TRUE` (or all rows with `includeWithdrawn`) |
+| History | Active rows by default; active and withdrawn rows with `includeWithdrawn` |
 
 Reads are a single GET. Writes go through DoltHub's async write endpoint: the client POSTs the statement, receives an `operation_name`, and polls until `done`. Expect a few hundred milliseconds per write.
 
@@ -85,7 +85,7 @@ Patterns this enables:
 ## Limits and trade-offs
 
 - **Latency**: writes are async + polled. Not for sub-second coordination loops; fine for anything a colony does with an LLM.
-- **No transactions over HTTP**: every statement is its own commit. Claims stay atomic because they're a single conditional `UPDATE`. If you need multi-statement ACID, pass `sql: { host, user, password, … }` to use the optional `mysql2` wire-protocol client alongside the HTTP client.
+- **No transaction helper**: every environment operation is a single statement. Claims stay atomic because they're one conditional `UPDATE`. Passing `sql: { host, user, password, … }` uses the optional `mysql2` wire-protocol client for lower latency, but operations still run independently through a pool. Use a dedicated SQL connection outside `DoltEnvironment` when you need a pinned multi-statement transaction.
 - **SQL interpolation**: values are escaped with `escapeSQL()` / `sqlValue()`. Signal types and IDs are framework-controlled; payloads are JSON-encoded. Don't build queries from untrusted strings yourself.
 - **Rate limits**: DoltHub's free tier is generous for colony-scale traffic but not for tight polling. Keep `pollInterval` ≥ 2 s per environment instance.
 
@@ -94,5 +94,3 @@ Patterns this enables:
 ## Testing without DoltHub
 
 `tests/environments/dolt.test.ts` mocks `fetch()` with an in-memory signal store that understands the INSERT/UPDATE/SELECT shapes the adapter emits. Copy that pattern to unit-test colonies against a Dolt environment offline.
-
-Design notes from the implementation are in [`plan.md`](../../plan.md).

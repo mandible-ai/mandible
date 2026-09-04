@@ -596,7 +596,7 @@ docs/
     monitor-trust.md    Sentinel pattern + trust policies
     custom-environment.md Implementing the Environment interface
     coordination.md     Gates and barriers for ordered work
-    signal-enrichment.md ctx.enrich() and Environment.update()
+    signal-enrichment.md ctx.enrich() / ctx.release() and Environment.update()
     dolt-environment.md DoltHub setup, schema mapping, branching patterns
     local-inference-providers.md vLLM, tool loop, qwen-code, OpenCode for local models
 

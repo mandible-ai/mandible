@@ -463,7 +463,7 @@ function runQwen(input: RunInput): Promise<QwenCodeResult> {
       timedOut = true;
       child.kill('SIGTERM');
       killTimer = setTimeout(() => {
-        if (!child.killed) child.kill('SIGKILL');
+        if (!settled) child.kill('SIGKILL');
       }, 5000);
     }, timeout);
 
@@ -589,20 +589,28 @@ interface RawRun {
 }
 
 function buildResult(raw: RawRun): QwenCodeResult {
-  const resultMessage = [...raw.messages].reverse().find((m) => m.type === 'result');
+  let resultMessage: QwenMessage | undefined;
+  for (let i = raw.messages.length - 1; i >= 0; i--) {
+    if (raw.messages[i].type === 'result') {
+      resultMessage = raw.messages[i];
+      break;
+    }
+  }
   const usage = resultMessage?.usage
     ? normalizeUsage(resultMessage.usage)
     : sumAssistantUsage(raw.messages);
+  const isError = resultMessage?.is_error ?? raw.exitCode !== 0;
+  const stopReason = raw.exitCode === 0 && isError ? 'error' : stopReasonFor(raw);
 
   return {
     text: resultMessage?.result ?? assistantText(raw.messages) ?? raw.stdout.trim(),
     stdout: raw.stdout,
     stderr: raw.stderr.trim(),
     exitCode: raw.exitCode,
-    stopReason: stopReasonFor(raw),
+    stopReason,
     durationMs: raw.durationMs,
-    success: raw.exitCode === 0,
-    isError: resultMessage?.is_error ?? raw.exitCode !== 0,
+    success: stopReason === 'success',
+    isError,
     timedOut: raw.timedOut,
     sessionId: raw.messages.find((m) => m.session_id)?.session_id,
     model: raw.messages.find((m) => m.model ?? m.message?.model)?.model

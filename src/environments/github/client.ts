@@ -266,6 +266,20 @@ export class GitHubClient {
     }
   }
 
+  async setLabels(issueNumber: number, labels: string[]): Promise<void> {
+    const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/labels`;
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: this.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ labels }),
+    });
+    this.updateRateLimit(response.headers);
+
+    if (!response.ok) {
+      throw new Error(`GitHub API error setting labels on #${issueNumber}: ${response.status}`);
+    }
+  }
+
   async removeLabel(issueNumber: number, label: string): Promise<void> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/labels/${encodeURIComponent(label)}`;
     const response = await fetch(url, {

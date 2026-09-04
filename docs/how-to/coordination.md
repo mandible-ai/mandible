@@ -98,9 +98,9 @@ Two `review:*` signals tagged `approved` → one `phase:merge-ready`. One approv
 | `then` | What to deposit; `payload` may be a function of the accumulated signals |
 | `ttl` / `onTimeout` | Expire after `ttl` ms; optionally deposit a timeout signal carrying what was collected |
 | `withdrawTriggers` | Withdraw the accumulated signals after firing (default false) |
-| `repeatable` | Reset and keep watching after firing (default false — one-shot barriers stop themselves) |
+| `repeatable` | Reset and keep watching for new trigger IDs after firing (default false — one-shot barriers stop themselves) |
 
-Signals are counted by ID, so polling never double-counts. A barrier started after its triggers already exist fires on its first poll.
+Signals are counted by ID for the lifetime of the barrier, so polling and repeatable rounds never double-count them. A barrier started after its triggers already exist fires on its first poll.
 
 ---
 
@@ -121,7 +121,7 @@ const batchSignalId = /* from the barrier's then, e.g. via env.watch('batch:shap
 await gate.deposit({ type: 'phase:integrate', payload: {}, preconditions: [batchSignalId] });
 ```
 
-Or skip the gate entirely and have the integration colony sense `batch:shaped` directly — the barrier's downstream signal *is* the ordering. Use a gate when the thing that must wait was deposited *before* its preconditions existed; use a barrier when you don't know how many upstream signals there will be until they arrive.
+Or skip the gate entirely and have the integration colony sense `batch:shaped` directly — the barrier's downstream signal *is* the ordering. Use a gate when the thing that must wait was deposited *before* its preconditions existed; use a barrier when the threshold is known but the IDs of the upstream signals are not.
 
 ## When not to use these
 

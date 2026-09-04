@@ -1,5 +1,5 @@
 // PURPOSE: mysql2 wire protocol client for Dolt — optional peer dependency
-// PURPOSE: Provides ACID transactions alongside the DoltHub HTTP API
+// PURPOSE: Provides lower-latency SQL access alongside the DoltHub HTTP API
 
 export interface DoltSQLConfig {
   host: string;

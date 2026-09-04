@@ -383,7 +383,23 @@ export class GitHubEnvironment implements SerializableEnvironment {
       signal.payload = { ...signal.payload, ...changes.payload };
     }
     if (changes.meta?.tags !== undefined) {
-      signal.meta.tags = changes.meta.tags;
+      const tags = [...new Set(changes.meta.tags)];
+      const issueNumber = this.issueNumberFromSignalId(signalId);
+      if (issueNumber !== null) {
+        const labels = [...tags];
+        const currentLabels = [...(signal.meta.tags ?? [])];
+        if (this.persistentClaims && signal.meta.claimed_by) {
+          const claimLabel = `${this.claimLabelPrefix}:${signal.meta.claimed_by}`;
+          if (!labels.includes(claimLabel)) labels.push(claimLabel);
+          if (!currentLabels.includes(claimLabel)) currentLabels.push(claimLabel);
+        }
+        const labelsChanged = labels.length !== currentLabels.length
+          || labels.some(label => !currentLabels.includes(label));
+        if (labelsChanged) {
+          await this.client.setLabels(issueNumber, labels);
+        }
+      }
+      signal.meta.tags = tags;
     }
     if (changes.meta?.concentration !== undefined) {
       signal.meta.concentration = changes.meta.concentration;

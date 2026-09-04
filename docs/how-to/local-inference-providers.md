@@ -1,10 +1,10 @@
 # Local Inference Providers
 
-Run Mandible colonies entirely on local hardware with vLLM. No cloud APIs, no external dependencies — everything on localhost.
+Run Mandible colonies entirely on local hardware with vLLM. No cloud model APIs are required, and inference stays on localhost.
 
 ## Overview
 
-Mandible ships three providers for local inference:
+Mandible ships four providers for local inference:
 
 | Provider | Purpose | Use When |
 |----------|---------|----------|
@@ -185,7 +185,11 @@ withToolLoop({
 Define custom tools using the `ToolDefinition` interface:
 
 ```typescript
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { ToolDefinition } from '@mandible-ai/mandible/providers';
+
+const execFileAsync = promisify(execFile);
 
 const gitDiffTool: ToolDefinition = {
   type: 'function',
@@ -200,9 +204,10 @@ const gitDiffTool: ToolDefinition = {
     },
   },
   execute: async (args, cwd) => {
-    const { execSync } = require('node:child_process');
-    const path = args.path ? ` -- ${args.path}` : '';
-    return execSync(`git diff --staged${path}`, { cwd }).toString();
+    const gitArgs = ['diff', '--staged'];
+    if (typeof args.path === 'string') gitArgs.push('--', args.path);
+    const { stdout } = await execFileAsync('git', gitArgs, { cwd });
+    return stdout;
   },
 };
 ```
@@ -375,7 +380,7 @@ withQwenCode({
 
 ## Error Handling
 
-All vLLM providers throw `VLLMError` with typed error codes:
+The low-level `vllmProvider()` and `vllmStructuredProvider()` factories throw `VLLMError` with typed error codes:
 
 ```typescript
 import { VLLMError, type VLLMErrorCode } from '@mandible-ai/mandible/providers';
@@ -400,8 +405,8 @@ try {
 ## Full Example: Local SDLC Pipeline
 
 ```typescript
-import { mandible } from '@mandible-ai/mandible';
-import { ForgejoEnvironment } from '@mandible-ai/mandible/environments/forgejo';
+import { FilesystemEnvironment, mandible } from '@mandible-ai/mandible';
+import { z } from 'zod';
 import {
   withLLM,
   withStructuredOutput,
@@ -417,11 +422,15 @@ import {
 
 const VLLM = 'http://localhost:8001';
 
-const env = new ForgejoEnvironment({
-  endpoint: 'http://forgejo:3000',
-  token: process.env.FORGEJO_TOKEN!,
-  owner: 'golem',
-  repo: 'work',
+const env = new FilesystemEnvironment({
+  root: './.mandible/sdlc-local',
+  name: 'sdlc-local',
+});
+
+const reviewSchema = z.object({
+  approved: z.boolean(),
+  feedback: z.string(),
+  severity: z.enum(['minor', 'major', 'blocking']),
 });
 
 mandible('sdlc-local')
@@ -475,7 +484,13 @@ mandible('sdlc-local')
   .colony('release', (c) => c
     .sense('release:ready', { unclaimed: true })
     .do('tag-and-push', withBash({
-      command: (signal) => `git tag v${signal.payload.version} && git push --tags`,
+      command: (signal) => {
+        const version = String(signal.payload.version);
+        if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+          throw new Error(`Invalid release version: ${version}`);
+        }
+        return `git tag v${version} && git push --tags`;
+      },
       output: { type: 'release:completed' },
     }))
   )

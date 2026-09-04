@@ -384,6 +384,8 @@ describe('withQwenCode', () => {
 
       const result = ctx.deposits[0].payload as QwenCodeResult;
       expect(result.isError).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.stopReason).toBe('error');
       expect(result.subtype).toBe('error_during_execution');
     });
 
