@@ -49,7 +49,7 @@ function shaper(c: ColonyBuilder) {
   return c
     .sense('task:ready', { unclaimed: true, minConcentration: 0.1 })
     .do('shape-code', withClaudeCode({
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'sonnet', // tier alias — resolves to the latest Sonnet
 
       systemPrompt: [
         'You are a senior TypeScript engineer in a coding colony.',
@@ -93,7 +93,7 @@ function critic(c: ColonyBuilder) {
   return c
     .sense('artifact:shaped', { unclaimed: true, minConcentration: 0.1 })
     .do('review-code', withStructuredOutput({
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'sonnet', // tier alias — resolves to the latest Sonnet
       provider: 'anthropic',
 
       systemPrompt: [

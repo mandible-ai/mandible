@@ -3,6 +3,7 @@
 
 import type { Signal, ActionContext } from '../core/types.js';
 import type { ClaudeCodeConfig, AgentResult, ActionHandler, SignalDeposit, BedrockConfig } from './types.js';
+import { resolveModel, DEFAULT_MODEL_ALIAS } from './models.js';
 
 /**
  * Creates an action handler powered by the Claude Code SDK.
@@ -22,7 +23,7 @@ export function withClaudeCode<T = Record<string, unknown>>(
   config: ClaudeCodeConfig<T>
 ): ActionHandler<T> {
   const {
-    model = 'claude-sonnet-4-5-20250929',
+    model: modelConfig = DEFAULT_MODEL_ALIAS,
     prompt,
     systemPrompt,
     allowedTools,
@@ -39,7 +40,19 @@ export function withClaudeCode<T = Record<string, unknown>>(
     autoWithdraw = true,
   } = config;
 
+  if (typeof modelConfig === 'function' && bedrock?.model) {
+    throw new Error(
+      'withClaudeCode: a dynamic `model` function cannot be combined with `bedrock.model` ' +
+      '(the static override would silently win). Return Bedrock model IDs from the function instead.'
+    );
+  }
+
   return async (signal: Signal<T>, ctx: ActionContext) => {
+    // 0. Resolve the model (alias or full ID; static string or signal-driven function)
+    const resolvedModel = resolveModel(
+      typeof modelConfig === 'function' ? modelConfig(signal) : modelConfig
+    );
+
     // 1. Resolve the prompt
     const resolvedPrompt = typeof prompt === 'function'
       ? await prompt(signal)
@@ -57,7 +70,7 @@ export function withClaudeCode<T = Record<string, unknown>>(
       const sdk = await import('@anthropic-ai/claude-agent-sdk');
 
       const queryOptions: Record<string, unknown> = {
-        model,
+        model: resolvedModel,
         systemPrompt: systemPrompt ?? buildDefaultSystemPrompt(ctx.colony),
         cwd: cwd ?? process.cwd(),
         permissionMode,
@@ -83,6 +96,7 @@ export function withClaudeCode<T = Record<string, unknown>>(
       });
 
       agentResult = await consumeGenerator(generator, onMessage);
+      agentResult.model = resolvedModel;
 
     } catch (err: any) {
       if (err.code === 'ERR_MODULE_NOT_FOUND' || err.code === 'MODULE_NOT_FOUND') {
@@ -109,7 +123,7 @@ export function withClaudeCode<T = Record<string, unknown>>(
       await ctx.withdraw(signal.id);
     }
 
-    ctx.log(`Agent completed (${agentResult.subtype}). Cost: $${agentResult.costUsd.toFixed(4)}, Duration: ${agentResult.durationMs}ms. Deposited ${deposits.length} signal(s).`);
+    ctx.log(`Agent completed (${agentResult.subtype}) on ${resolvedModel}. Cost: $${agentResult.costUsd.toFixed(4)}, Duration: ${agentResult.durationMs}ms. Deposited ${deposits.length} signal(s).`);
   };
 }
 

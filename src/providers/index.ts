@@ -3,6 +3,41 @@ export { withClaudeCode, buildDefaultSystemPrompt } from './claude-code.js';
 export { withStructuredOutput } from './structured-output.js';
 export { withLLM } from './llm.js';
 export { withBash } from './bash.js';
+export { generateStructured } from './structured-output.js';
+export type { StructuredCallOptions } from './structured-output.js';
+
+// Model aliases — tier names that track the latest model
+export {
+  MODEL_ALIASES,
+  DEFAULT_MODEL_ALIAS,
+  resolveModel,
+  isModelAlias,
+  setModelAliases,
+  resetModelAliases,
+  currentModelAliases,
+} from './models.js';
+export type { ModelAlias } from './models.js';
+
+// Classification — marks left on signals for routers and downstream colonies
+export { withClassifier, isClassified, mergeTags, CLASSIFIED_TAG_PREFIX } from './classifier.js';
+export type { ClassifierConfig } from './classifier.js';
+
+// Stigmergic model routing
+export {
+  withModelRouter,
+  selectModel,
+  byTag,
+  byConcentration,
+  byType,
+  byPayload,
+  byEscalation,
+  byLineage,
+  escalationLevel,
+  routedVia,
+  ROUTE_TAG_PREFIX,
+  ESCALATION_TAG_PREFIX,
+} from './model-router.js';
+export type { ModelRoute, ModelRouterConfig } from './model-router.js';
 
 // vLLM local inference providers
 export {

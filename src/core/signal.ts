@@ -89,14 +89,16 @@ export function matchesQuery(signal: Signal, query: SignalQuery): boolean {
  *   '*:ready'      — matches any domain with state 'ready'
  *   '*'            — matches everything
  */
-function matchType(signalType: string, pattern: string): boolean {
+export function matchType(signalType: string, pattern: string): boolean {
   if (pattern === '*') return true;
 
   // Convert glob to regex
+  // Order matters: `**` must be handled before `*`, or it degrades to `*`.
   const regexStr = '^' + pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')  // escape regex special chars
+    .replace(/\*\*/g, '\0')              // placeholder for ** (across segments)
     .replace(/\*/g, '[^:]*')                 // * matches within a segment
-    .replace(/\*\*/g, '.*')                  // ** matches across segments
+    .replace(/\0/g, '.*')                // ** matches across segments
     + '$';
 
   return new RegExp(regexStr).test(signalType);

@@ -286,7 +286,7 @@ describe('withStructuredOutput + Bedrock', () => {
 
     const { withStructuredOutput } = await import('../../src/providers/structured-output.js');
     const handler = withStructuredOutput({
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'sonnet',
       provider: 'bedrock',
       bedrockConfig: { region: 'us-east-1' },
       prompt: 'Review this',
@@ -316,7 +316,7 @@ describe('withStructuredOutput + Bedrock', () => {
 
     const { withStructuredOutput } = await import('../../src/providers/structured-output.js');
     const handler = withStructuredOutput({
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'sonnet',
       provider: 'bedrock',
       bedrockConfig: {
         region: 'us-west-2',
@@ -350,7 +350,7 @@ describe('withStructuredOutput + Bedrock', () => {
 
     const { withStructuredOutput } = await import('../../src/providers/structured-output.js');
     const handler = withStructuredOutput({
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'sonnet',
       provider: 'bedrock',
       bedrockConfig: { region: 'us-east-1' },
       prompt: 'test',
@@ -369,7 +369,7 @@ describe('withStructuredOutput + Bedrock', () => {
 
     const { withStructuredOutput } = await import('../../src/providers/structured-output.js');
     const handler = withStructuredOutput({
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'sonnet',
       provider: 'bedrock',
       // bedrockConfig intentionally omitted
       prompt: 'test',
@@ -396,7 +396,7 @@ describe('withStructuredOutput + Bedrock', () => {
 
     const { withStructuredOutput } = await import('../../src/providers/structured-output.js');
     const handler = withStructuredOutput({
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'sonnet',
       provider: 'bedrock',
       bedrockConfig: {
         region: 'us-east-1',

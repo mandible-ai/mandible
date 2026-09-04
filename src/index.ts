@@ -132,7 +132,42 @@ export { withLLM } from './providers/llm.js';
 export { withBash } from './providers/bash.js';
 export { withOpenCode } from './providers/opencode.js';
 export { withOpenHands, OpenHandsError } from './providers/openhands.js';
-export { assembleContext, withContext } from './providers/context.js';
+export { assembleContext, withContext, walkLineage } from './providers/context.js';
+export { generateStructured } from './providers/structured-output.js';
+export type { StructuredCallOptions } from './providers/structured-output.js';
+
+// Model aliases — tier names that track the latest model
+export {
+  MODEL_ALIASES,
+  DEFAULT_MODEL_ALIAS,
+  resolveModel,
+  isModelAlias,
+  setModelAliases,
+  resetModelAliases,
+  currentModelAliases,
+} from './providers/models.js';
+export type { ModelAlias } from './providers/models.js';
+
+// Classification — marks left on signals for routers and downstream colonies
+export { withClassifier, isClassified, mergeTags, CLASSIFIED_TAG_PREFIX } from './providers/classifier.js';
+export type { ClassifierConfig } from './providers/classifier.js';
+
+// Stigmergic model routing
+export {
+  withModelRouter,
+  selectModel,
+  byTag,
+  byConcentration,
+  byType,
+  byPayload,
+  byEscalation,
+  byLineage,
+  escalationLevel,
+  routedVia,
+  ROUTE_TAG_PREFIX,
+  ESCALATION_TAG_PREFIX,
+} from './providers/model-router.js';
+export type { ModelRoute, ModelRouterConfig } from './providers/model-router.js';
 
 export type {
   ActionHandler,

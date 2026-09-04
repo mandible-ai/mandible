@@ -38,7 +38,12 @@ export type ActionHandler<T = Record<string, unknown>> = (
 export interface BedrockConfig {
   /** AWS region for Bedrock. Required. */
   region: string;
-  /** Override the Bedrock model ID (e.g. 'us.anthropic.claude-sonnet-4-6'). */
+  /**
+   * Static Bedrock model ID (e.g. 'us.anthropic.claude-sonnet-4-6').
+   * Takes precedence over a static `model` string. Cannot be combined
+   * with a dynamic `model` function — return Bedrock IDs from the
+   * function instead.
+   */
   model?: string;
   /** AWS access key ID. Falls back to AWS SDK credential chain. */
   accessKeyId?: string;
@@ -63,8 +68,13 @@ export interface BedrockConfig {
  * Uses Claude Code SDK for full agentic coding capabilities.
  */
 export interface ClaudeCodeConfig<T = Record<string, unknown>> {
-  /** Model to use. Defaults to 'claude-sonnet-4-5-20250929'. */
-  model?: string;
+  /**
+   * Model to use. Accepts a tier alias ('fable' | 'opus' | 'sonnet' | 'haiku')
+   * or a full model ID. Defaults to 'sonnet'.
+   * Can be a function of the signal for dynamic model selection.
+   * An explicit `model` function cannot be combined with `bedrock.model`.
+   */
+  model?: string | ((signal: Signal<T>) => string);
 
   /**
    * Build the prompt from the incoming signal.
@@ -155,6 +165,8 @@ export interface ClaudeCodeConfig<T = Record<string, unknown>> {
 export interface AgentResult {
   /** The final text output from the agent. */
   text: string;
+  /** Resolved model ID that ran this invocation (trail for downstream colonies). */
+  model?: string;
   /** Total cost in USD for the agent run. */
   costUsd: number;
   /** Wall-clock duration in milliseconds. */
@@ -173,8 +185,13 @@ export interface AgentResult {
  * Provider-agnostic — works with any model that supports JSON output.
  */
 export interface StructuredOutputConfig<T = Record<string, unknown>, R = Record<string, unknown>> {
-  /** Model identifier. Format depends on the SDK you're using. */
-  model: string;
+  /**
+   * Model to use. Accepts a tier alias ('fable' | 'opus' | 'sonnet' | 'haiku')
+   * or a full model ID (format depends on the SDK you're using).
+   * Can be a function of the signal for dynamic model selection.
+   * An explicit `model` function cannot be combined with `bedrockConfig.model`.
+   */
+  model: string | ((signal: Signal<T>) => string);
 
   /**
    * Provider SDK to use for the LLM call.
@@ -228,8 +245,13 @@ export interface StructuredOutputConfig<T = Record<string, unknown>, R = Record<
  * Provider-agnostic: works with Anthropic, OpenAI, Bedrock, Vercel AI, or custom.
  */
 export interface LLMConfig<T = Record<string, unknown>> {
-  /** Model identifier. Format depends on the SDK you're using. */
-  model: string;
+  /**
+   * Model to use. Accepts a tier alias ('fable' | 'opus' | 'sonnet' | 'haiku')
+   * or a full model ID (format depends on the SDK you're using).
+   * Can be a function of the signal for dynamic model selection.
+   * An explicit `model` function cannot be combined with `bedrockConfig.model`.
+   */
+  model: string | ((signal: Signal<T>) => string);
 
   /**
    * Provider SDK to use for the LLM call.

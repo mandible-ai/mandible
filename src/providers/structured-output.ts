@@ -15,7 +15,7 @@
 // Usage:
 //   colony('critic')
 //     .do('review', withStructuredOutput({
-//       model: 'claude-sonnet-4-5-20250929',
+//       model: 'sonnet',          // alias → latest Sonnet; full IDs also accepted
 //       provider: 'anthropic',
 //       schema: z.object({
 //         approved: z.boolean(),
@@ -32,6 +32,7 @@
 
 import type { Signal, ActionContext } from '../core/types.js';
 import { resolveGatewayGroup } from './llm.js';
+import { resolveModel } from './models.js';
 import type {
   StructuredOutputConfig,
   ActionHandler,
@@ -51,7 +52,7 @@ export function withStructuredOutput<
   config: StructuredOutputConfig<T, R>
 ): ActionHandler<T> {
   const {
-    model,
+    model: modelConfig,
     provider = 'anthropic',
     prompt,
     systemPrompt,
@@ -63,46 +64,14 @@ export function withStructuredOutput<
     bedrockConfig,
   } = config;
 
+  assertNoDynamicModelWithBedrock('withStructuredOutput', modelConfig, bedrockConfig);
+
   return async (signal: Signal<T>, ctx: ActionContext) => {
-    // 1. Resolve the prompt
-    const resolvedPrompt = typeof prompt === 'function'
-      ? await prompt(signal)
-      : prompt;
-
-    // 2. Build the full prompt with schema instructions
-    const fullPrompt = schema
-      ? `${resolvedPrompt}\n\nRespond with valid JSON matching this schema:\n${schemaToString(schema)}`
-      : resolvedPrompt;
-
-    // 3. Call the LLM
-    let result: R;
-
-    if (typeof provider === 'function') {
-      // Custom provider function
-      result = await (provider as LLMCallFunction<R>)(fullPrompt, {
-        systemPrompt,
-        maxTokens,
-        temperature,
-      });
-    } else {
-      result = await callProvider(provider, model, fullPrompt, {
-        systemPrompt,
-        maxTokens,
-        temperature,
-        schema,
-        bedrockConfig,
-      });
-    }
-
-    // 4. Validate against schema if provided
-    if (schema && typeof schema.parse === 'function') {
-      try {
-        result = schema.parse(result);
-      } catch (err: any) {
-        ctx.log(`Schema validation failed: ${err.message}`, 'error');
-        throw new Error(`Structured output validation failed: ${err.message}`);
-      }
-    }
+    const { result, model: resolvedModel } = await generateStructured<T, R>(
+      { model: modelConfig, provider, prompt, systemPrompt, schema, maxTokens, temperature, bedrockConfig },
+      signal,
+      ctx,
+    );
 
     // 5. Route to signal deposits
     const deposits = resolveRoute(route, result, signal);
@@ -119,8 +88,90 @@ export function withStructuredOutput<
       await ctx.withdraw(signal.id);
     }
 
-    ctx.log(`Structured output completed. Deposited ${deposits.length} signal(s).`);
+    ctx.log(`Structured output completed on ${resolvedModel}. Deposited ${deposits.length} signal(s).`);
   };
+}
+
+// ----------------------------------------------------------
+// Shared structured call — used by withStructuredOutput and withClassifier
+// ----------------------------------------------------------
+
+/** The subset of StructuredOutputConfig needed to make one validated LLM call. */
+export type StructuredCallOptions<T, R> = Pick<
+  StructuredOutputConfig<T, R>,
+  'model' | 'provider' | 'prompt' | 'systemPrompt' | 'schema' | 'maxTokens' | 'temperature' | 'bedrockConfig'
+>;
+
+/**
+ * Resolve model + prompt, call the LLM, validate against the schema.
+ * Returns the parsed result and the concrete model ID that ran.
+ */
+export async function generateStructured<T, R>(
+  opts: StructuredCallOptions<T, R>,
+  signal: Signal<T>,
+  ctx: ActionContext,
+): Promise<{ result: R; model: string }> {
+  const {
+    model: modelConfig,
+    provider = 'anthropic',
+    prompt,
+    systemPrompt,
+    schema,
+    maxTokens = 4096,
+    temperature = 0,
+    bedrockConfig,
+  } = opts;
+
+  // 1. Resolve the model (alias or full ID; static string or signal-driven function)
+  const model = resolveModel(
+    typeof modelConfig === 'function' ? modelConfig(signal) : modelConfig
+  );
+
+  // 2. Resolve the prompt
+  const resolvedPrompt = typeof prompt === 'function'
+    ? await prompt(signal)
+    : prompt;
+
+  // 3. Build the full prompt with schema instructions
+  const fullPrompt = schema
+    ? `${resolvedPrompt}\n\nRespond with valid JSON matching this schema:\n${schemaToString(schema)}`
+    : resolvedPrompt;
+
+  // 4. Call the LLM
+  let result: R;
+  if (typeof provider === 'function') {
+    result = await (provider as LLMCallFunction<R>)(fullPrompt, { systemPrompt, maxTokens, temperature });
+  } else {
+    result = await callProvider(provider, model, fullPrompt, {
+      systemPrompt, maxTokens, temperature, schema, bedrockConfig,
+    });
+  }
+
+  // 5. Validate against schema if provided
+  if (schema && typeof schema.parse === 'function') {
+    try {
+      result = schema.parse(result);
+    } catch (err: any) {
+      ctx.log(`Schema validation failed: ${err.message}`, 'error');
+      throw new Error(`Structured output validation failed: ${err.message}`);
+    }
+  }
+
+  return { result, model };
+}
+
+/** Guard: a dynamic model function combined with a static Bedrock override would silently lose. */
+export function assertNoDynamicModelWithBedrock(
+  who: string,
+  model: unknown,
+  bedrockConfig: BedrockConfig | undefined,
+): void {
+  if (typeof model === 'function' && bedrockConfig?.model) {
+    throw new Error(
+      `${who}: a dynamic \`model\` function cannot be combined with \`bedrockConfig.model\` ` +
+      '(the static override would silently win). Return Bedrock model IDs from the function instead.'
+    );
+  }
 }
 
 // ----------------------------------------------------------

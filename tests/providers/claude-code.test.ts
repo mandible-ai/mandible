@@ -121,7 +121,7 @@ describe('withClaudeCode', () => {
     expect(mockQuery).toHaveBeenCalledOnce();
     const callArgs = mockQuery.mock.calls[0][0];
     expect(callArgs.prompt).toBe('Do the task');
-    expect(callArgs.options.model).toBe('claude-sonnet-4-5-20250929');
+    expect(callArgs.options.model).toBe('claude-sonnet-5'); // default alias 'sonnet' resolved
     expect(callArgs.options.permissionMode).toBe('bypassPermissions');
     expect(callArgs.options.allowDangerouslySkipPermissions).toBe(true);
     expect(callArgs.options.maxBudgetUsd).toBe(1.0);

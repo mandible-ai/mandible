@@ -381,6 +381,14 @@ export interface ActionContext {
     changes: { payload?: Record<string, unknown>; tags?: string[] }
   ): Promise<Signal>;
 
+  /**
+   * Release this colony's claim on a signal without withdrawing it.
+   * For actions that annotate a signal (classifiers, enrichers) and then
+   * hand it back to the environment for other colonies to pick up.
+   * Defaults to the triggering signal.
+   */
+  release(signalId?: string): Promise<void>;
+
   /** Log a message (routed through the framework's logging) */
   log(message: string, level?: 'debug' | 'info' | 'warn' | 'error'): void;
 

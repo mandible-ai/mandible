@@ -31,7 +31,7 @@ export interface IssueDetectedPayload {
 export interface ScoutColonyOptions {
   /** Signal types to sense. Defaults to ['scan:trigger']. */
   senseTypes?: string | string[];
-  /** Model to use. Defaults to 'claude-sonnet-4-5-20250929'. */
+  /** Model to use. Defaults to 'sonnet'. */
   model?: string;
   /** Max budget per scan in USD. Defaults to 0.50. */
   maxBudgetUsd?: number;
@@ -64,7 +64,7 @@ export function configureScout(
 ) {
   const {
     senseTypes = 'scan:trigger',
-    model = 'claude-sonnet-4-5-20250929',
+    model = 'sonnet',
     maxBudgetUsd = 0.50,
     maxTurns = 50,
     allowedTools = ['Read', 'Glob', 'Grep', 'Bash'],

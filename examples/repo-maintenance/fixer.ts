@@ -45,7 +45,7 @@ export interface FixFailedPayload {
 export interface FixerColonyOptions {
   /** Signal types to sense. Defaults to ['issue:detected']. */
   senseTypes?: string | string[];
-  /** Model to use. Defaults to 'claude-sonnet-4-5-20250929'. */
+  /** Model to use. Defaults to 'sonnet'. */
   model?: string;
   /** Max budget per fix in USD. Defaults to 3.00. */
   maxBudgetUsd?: number;
@@ -82,7 +82,7 @@ export function configureFixer(
 ) {
   const {
     senseTypes = 'issue:detected',
-    model = 'claude-sonnet-4-5-20250929',
+    model = 'sonnet',
     maxBudgetUsd = 3.00,
     maxTurns = 80,
     allowedTools = ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep'],
