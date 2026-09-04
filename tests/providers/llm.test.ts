@@ -632,10 +632,66 @@ describe('withLLM', () => {
         expect.objectContaining({
           messages: [{
             role: 'user',
-            content: 'Summarize this\n\nRespond using well-structured markdown.',
+            content:
+              'Summarize this\n\nRespond with raw, well-structured Markdown only. ' +
+              'Do not JSON-encode it or wrap it in quotes or a code fence.',
           }],
         })
       );
+    });
+
+    it('decodes JSON-string-encoded markdown from a provider', async () => {
+      const markdown = '# Guide\n\nA **valid** Markdown document.';
+      const handler = withLLM({
+        model: 'gemini-3.7-flash',
+        provider: async () => JSON.stringify(markdown),
+        prompt: 'Generate a guide',
+        format: 'markdown',
+        route: 'output:ready',
+      });
+
+      const ctx = makeContext();
+      await handler(makeSignal(), ctx);
+
+      expect(ctx.deposits[0].payload).toEqual({
+        text: markdown,
+        format: 'markdown',
+      });
+    });
+
+    it('preserves JSON string literals when markdown was not requested', async () => {
+      const encoded = JSON.stringify('# Guide\n\nBody');
+      const handler = withLLM({
+        model: 'gemini-3.7-flash',
+        provider: async () => encoded,
+        prompt: 'Generate text',
+        format: 'text',
+        route: 'output:ready',
+      });
+
+      const ctx = makeContext();
+      await handler(makeSignal(), ctx);
+
+      expect(ctx.deposits[0].payload).toEqual({ text: encoded });
+    });
+
+    it('preserves intentional quotes in single-line markdown', async () => {
+      const quoted = '"Important"';
+      const handler = withLLM({
+        model: 'gemini-3.7-flash',
+        provider: async () => quoted,
+        prompt: 'Generate a notice',
+        format: 'markdown',
+        route: 'output:ready',
+      });
+
+      const ctx = makeContext();
+      await handler(makeSignal(), ctx);
+
+      expect(ctx.deposits[0].payload).toEqual({
+        text: quoted,
+        format: 'markdown',
+      });
     });
 
     it('does not append instruction when format is "text"', async () => {

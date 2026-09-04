@@ -82,6 +82,31 @@ describe('gemini provider', () => {
     expect(ctx.deposits[0].payload.text).toBe('gateway gemini text');
   });
 
+  it('returns raw markdown when the gateway JSON-encodes Gemini text', async () => {
+    vi.stubEnv('OPENAI_BASE_URL', 'https://gw.test/v1');
+    vi.stubEnv('OPENAI_API_KEY', 'sk-zone-key');
+    const markdown = '# The Barnyard Guide\n\nValid **Markdown**.';
+    const { default: OpenAI } = await import('openai');
+    (OpenAI as any)._mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify(markdown) } }],
+    });
+
+    const handler = withLLM({
+      provider: 'gemini',
+      model: 'gemini-3.7-flash',
+      prompt: 'Write a guide',
+      format: 'markdown',
+      route: 'out:ready',
+    });
+    const ctx = makeContext();
+    await handler(makeSignal(), ctx);
+
+    expect(ctx.deposits[0].payload).toEqual({
+      text: markdown,
+      format: 'markdown',
+    });
+  });
+
   it('normalizes gemini/ and google/ prefixes for the gateway model group', async () => {
     vi.stubEnv('OPENAI_BASE_URL', 'https://gw.test/v1');
     vi.stubEnv('OPENAI_API_KEY', 'sk-zone-key');
