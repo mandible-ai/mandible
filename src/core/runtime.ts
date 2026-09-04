@@ -546,6 +546,17 @@ export class ColonyRuntime implements IColonyRuntime {
         return updated;
       },
 
+      async release(signalId = triggeringSignal.id) {
+        await env.release(signalId);
+        runtime.emitEvent({
+          type: 'claim:released',
+          colony: colonyName,
+          timestamp: Date.now(),
+          signalId,
+        });
+        runtime.log('debug', `Released claim on ${signalId}`);
+      },
+
       log(message, level = 'info') {
         runtime.log(level, `[${colonyName}] ${message}`);
       },

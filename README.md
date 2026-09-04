@@ -283,12 +283,41 @@ Action providers wrap external capabilities into a standard interface for colony
 | `withClaudeCode` | Coding agents, complex reasoning | Claude Code SDK (live) |
 | `withStructuredOutput` | Classification, review, decisions | Anthropic, OpenAI, Vercel AI SDK |
 | `withBash` | Build commands, test runners, linters | Shell execution |
+| `withModelRouter` | Pick a provider/model per signal from marks in the environment | Any of the above |
+| `withClassifier` | Leave `complexity:*` / `kind:*` marks on unlabeled tasks | Anthropic, OpenAI, Vercel AI SDK |
 
 `withClaudeCode` is fully wired to the Claude Code SDK — colonies spawn real agent sessions that read files, write code, and run commands. It supports **AWS Bedrock routing** via the `bedrock` config option for enterprise deployments.
 
 The provider assembles context by walking signal lineage (`caused_by` chains), giving the agent full awareness of the work pipeline state.
 
-See [Action Providers Guide](docs/how-to/action-providers.md) for full configuration reference, output mapping, and context assembly.
+**Model tiers, not model IDs.** Every `model` field takes an alias — `'fable' | 'opus' | 'sonnet' | 'haiku'` — that resolves to the current model at call time, or a function of the signal:
+
+```typescript
+withClaudeCode({ model: 'opus', prompt })                                  // alias
+withClaudeCode({ model: (s) => s.meta.tags?.includes('hard') ? 'opus' : 'haiku', prompt })
+```
+
+**Stigmergic model routing.** Instead of a central router, the environment says what a task needs — a GitHub label, a tag from an upstream colony, a mark from a previous failed attempt — and the colony reads it when it acts:
+
+```typescript
+colony('worker')
+  .sense('task:ready', { unclaimed: true })
+  .retry(3)
+  .do('work', withModelRouter({
+    classify: withClassifier({ model: 'haiku', schema, prompt, tags: r => [`complexity:${r.complexity}`] }),
+    routes: [
+      byLineage({ environment: env, type: 'review:changes-needed' }, withClaudeCode({ model: 'opus', prompt })),
+      byEscalation(1,          withClaudeCode({ model: 'opus', prompt })),   // retry after a failure
+      byTag('complexity:high', withClaudeCode({ model: 'opus', prompt })),
+      byTag('complexity:low',  withStructuredOutput({ model: 'haiku', schema, prompt, route })),
+    ],
+    fallback: withClaudeCode({ model: 'sonnet', prompt }),
+  }))
+```
+
+The router leaves `route:<name>` on the signal it dispatches and `escalation:<n>` when a handler fails, so the next retry routes higher and downstream colonies can see which tier produced an artifact. `withClassifier` runs only when nothing else has marked the task, and never twice.
+
+See [Action Providers](docs/how-to/action-providers.md) for configuration, output mapping, and context assembly, and [Model Routing](docs/how-to/model-routing.md) for aliases, routing, classification, and a runnable demo (`npm run demo:model-routing`).
 
 ## Signal types
 
@@ -461,6 +490,9 @@ src/
     claude-code.ts      withClaudeCode — Claude Code SDK (live)
     structured-output.ts withStructuredOutput — multi-model
     bash.ts             withBash — shell commands
+    models.ts           Model tier aliases (fable/opus/sonnet/haiku → latest IDs)
+    model-router.ts     withModelRouter — signal-driven routing with trail + escalation
+    classifier.ts       withClassifier — marks unlabeled tasks for routing
     context.ts          Context assembly from signal lineage
   patterns/
     bridge.ts           SignalBridge — cross-environment mirroring with attestation
@@ -479,6 +511,7 @@ docs/
   how-to/
     bridge-signals.md   SignalBridge + DebugBridge usage guide
     action-providers.md withClaudeCode, withStructuredOutput, withBash reference
+    model-routing.md    Model aliases, dynamic model, withModelRouter, withClassifier
     monitor-trust.md    Sentinel pattern + trust policies
     custom-environment.md Implementing the Environment interface
 
@@ -489,6 +522,7 @@ examples/
     docker.ts           Docker host — runs as containers
     with-providers.ts   Real LLM providers (Claude Code, Anthropic, Bash)
   repo-maintenance/     Scout + Fixer repo maintenance demo
+  model-routing/        Classifier + router + escalation + lineage, faked LLM
 ```
 
 ## Examples
@@ -528,6 +562,14 @@ npm run demo:repo-maintenance
 
 Both colonies are wired to real Claude agents via `withClaudeCode`. The dashboard shows signal flow in real time.
 
+### Model routing
+
+No API keys needed — the LLM is faked so you can watch the *routing* happen. A classifier marks unlabeled tasks, tag routes send them to the right tier, a flaky "haiku" handler fails once and the retry escalates to "opus", and a task whose last artifact was rejected routes up on lineage alone. Ends by printing the trail each signal carries.
+
+```bash
+npm run demo:model-routing
+```
+
 ## Roadmap
 
 - [x] `mandible dev` CLI + live dashboard
@@ -539,6 +581,8 @@ Both colonies are wired to real Claude agents via `withClaudeCode`. The dashboar
 - [x] `@mandible-ai/cloud` — run colonies in isolation using microVMs via Mandible Cloud
 - [ ] `create-mandible` starter template
 - [ ] Dashboard GIF + landing page
+- [x] Model aliases, stigmergic model routing, classifier
+- [ ] Budget-aware routing (`byBudget`)
 - [ ] Dolt full implementation
 - [ ] CloudEvents bridge adapter
 - [ ] Colony scaler

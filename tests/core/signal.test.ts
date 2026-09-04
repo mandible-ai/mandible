@@ -128,6 +128,14 @@ describe('matchesQuery — type matching', () => {
     expect(matchesQuery(s, { type: 'task:*' })).toBe(false);
   });
 
+  it('matches ** across colon segments', () => {
+    expect(matchesQuery(makeSignal({ type: 'task:sub:ready' }), { type: 'task:**' })).toBe(true);
+    expect(matchesQuery(makeSignal({ type: 'task:ready' }), { type: 'task:**' })).toBe(true);
+    expect(matchesQuery(makeSignal({ type: 'review:done' }), { type: 'task:**' })).toBe(false);
+    // ** and * can mix
+    expect(matchesQuery(makeSignal({ type: 'a:b:c:ready' }), { type: '**:ready' })).toBe(true);
+  });
+
   it('matches bare * against any type', () => {
     expect(matchesQuery(makeSignal({ type: 'task:ready' }), { type: '*' })).toBe(true);
     expect(matchesQuery(makeSignal({ type: 'review:approved' }), { type: '*' })).toBe(true);

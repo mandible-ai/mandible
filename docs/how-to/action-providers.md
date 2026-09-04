@@ -33,8 +33,10 @@ import { withClaudeCode } from '@mandible-ai/mandible';
 colony('shaper', c => c
   .sense('task:ready', { unclaimed: true })
   .do('shape-code', withClaudeCode({
-    // Model to use (default: 'claude-sonnet-4-5-20250929')
-    model: 'claude-sonnet-4-5-20250929',
+    // Model tier alias ('fable' | 'opus' | 'sonnet' | 'haiku') or a full model ID.
+    // Aliases track the latest model in that family — see model-routing.md.
+    // Can also be a function of the signal. Default: 'sonnet'.
+    model: 'sonnet',
 
     // Build the prompt from the incoming signal
     // Can be a static string or an async function
@@ -136,6 +138,7 @@ The provider extracts a structured result from the SDK:
 ```typescript
 interface AgentResult {
   text: string;           // Final text output
+  model?: string;         // Resolved model ID that ran (trail for downstream colonies)
   costUsd: number;        // Total cost in USD
   durationMs: number;     // Wall-clock duration
   usage: {
@@ -180,8 +183,8 @@ import { z } from 'zod';
 colony('critic', c => c
   .sense('artifact:shaped', { unclaimed: true })
   .do('review-code', withStructuredOutput({
-    // Model identifier (format depends on provider)
-    model: 'claude-sonnet-4-5-20250929',
+    // Model tier alias or full ID (format depends on provider). Can be a function of the signal.
+    model: 'sonnet',
 
     // Provider SDK: 'anthropic' | 'bedrock' | 'openai' | 'vercel-ai' | custom function
     provider: 'anthropic',
@@ -561,7 +564,7 @@ const host = await mandible('code-pipeline')
   .colony('critic', c => c
     .sense('artifact:shaped', { unclaimed: true })
     .do('review-code', withStructuredOutput({
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'sonnet',
       provider: 'anthropic',
       prompt: (signal) => `Review:\n${JSON.stringify(signal.payload, null, 2)}`,
       systemPrompt: 'You are a code reviewer. Be rigorous.',

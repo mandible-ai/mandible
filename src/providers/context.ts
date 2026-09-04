@@ -121,7 +121,11 @@ export function withContext(
 // Lineage walking
 // ----------------------------------------------------------
 
-async function walkLineage(
+/**
+ * Walk a signal's caused_by chain up to `maxDepth` levels, returning
+ * every ancestor found (active signals first, then history).
+ */
+export async function walkLineage(
   signal: Signal,
   env: Environment,
   maxDepth: number,

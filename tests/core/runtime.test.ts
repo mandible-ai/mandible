@@ -699,6 +699,30 @@ describe('runtime — decay control', () => {
 
 // ── Enrich ──────────────────────────────────────────────────
 
+describe('runtime — release', () => {
+  it('ctx.release() hands the claim back without withdrawing', async () => {
+    let claimedDuringAction: string | undefined;
+    const def = buildColony(async (signal, ctx) => {
+      const mid = (await env.observe({ filter: s => s.id === signal.id }))[0];
+      claimedDuringAction = mid?.meta.claimed_by;
+      await ctx.enrich(signal.id, { tags: ['classified:default'] });
+      await ctx.release();
+    });
+
+    const trigger = await depositTask('release-test');
+    const rt = createRuntime(def);
+    await rt.start();
+    await sleep(300);
+    await rt.stop();
+
+    expect(claimedDuringAction).toBe('test-colony');
+    const after = (await env.observe({ filter: s => s.id === trigger.id }))[0];
+    expect(after).toBeDefined();                    // not withdrawn
+    expect(after.meta.claimed_by).toBeUndefined();  // claim released
+    expect(after.meta.tags).toContain('classified:default');
+  });
+});
+
 describe('runtime — enrich', () => {
   it('ctx.enrich() updates signal in-place and returns updated signal', async () => {
     let enrichedSignal: Signal | undefined;

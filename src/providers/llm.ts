@@ -9,6 +9,7 @@ import type {
   LLMCallFunction,
   BedrockConfig,
 } from './types.js';
+import { resolveModel } from './models.js';
 
 /**
  * Creates an action handler that calls an LLM for plain text generation
@@ -17,7 +18,7 @@ import type {
  * Usage:
  *   colony('summarizer')
  *     .do('article:ready', withLLM({
- *       model: 'claude-sonnet-4-5-20250929',
+ *       model: 'sonnet',          // alias → latest Sonnet; full IDs also accepted
  *       provider: 'anthropic',
  *       prompt: (signal) => `Summarize this article:\n${signal.payload.content}`,
  *       route: 'summary:ready',
@@ -28,7 +29,7 @@ export function withLLM<T = Record<string, unknown>>(
   config: LLMConfig<T>
 ): ActionHandler<T> {
   const {
-    model,
+    model: modelConfig,
     provider = 'anthropic',
     prompt,
     systemPrompt,
@@ -40,7 +41,19 @@ export function withLLM<T = Record<string, unknown>>(
     bedrockConfig,
   } = config;
 
+  if (typeof modelConfig === 'function' && bedrockConfig?.model) {
+    throw new Error(
+      'withLLM: a dynamic `model` function cannot be combined with `bedrockConfig.model` ' +
+      '(the static override would silently win). Return Bedrock model IDs from the function instead.'
+    );
+  }
+
   return async (signal: Signal<T>, ctx: ActionContext) => {
+    // 0. Resolve the model (alias or full ID; static string or signal-driven function)
+    const model = resolveModel(
+      typeof modelConfig === 'function' ? modelConfig(signal) : modelConfig
+    );
+
     // 1. Resolve the prompt
     let resolvedPrompt = typeof prompt === 'function'
       ? await prompt(signal)
