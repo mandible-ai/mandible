@@ -1,6 +1,6 @@
 {
   "name": "@mandible-ai/mandible",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "Universal stigmergy framework for autonomous agent coordination — like ant colonies using pheromone trails",
   "type": "module",
   "main": "dist/src/index.js",
