@@ -6,23 +6,23 @@
 
 A universal stigmergy framework for autonomous agent coordination.
 
-Instead of wiring agents together with message passing, Mandible agents coordinate by depositing and sensing **signals** in a shared **environment** — the same way ant colonies self-organize through pheromone trails. No orchestrator. No message routing. Complex behavior emerges from simple rules.
+Instead of wiring agents together with message passing, Mandible agents coordinate by depositing and sensing **signals** in a shared **environment**, the same way ant colonies self-organize through pheromone trails. No orchestrator. No message routing. Complex behavior emerges from simple rules.
 
 [mandible.dev](https://mandible.dev)
 
 ## Why stigmergy over message passing?
 
-Most multi-agent frameworks coordinate agents through direct messaging. This reimplements distributed systems problems — service discovery, routing, consensus, backpressure — but for LLMs.
+Most multi-agent frameworks coordinate agents through direct messaging. This reimplements distributed systems problems: service discovery, routing, consensus, backpressure, but for LLMs.
 
-Stigmergy sidesteps all of that. The environment carries the state. Agents are stateless reactive workers. You never need to answer "who should I tell about this?" — you just modify the environment, and whoever cares will notice.
+Stigmergy sidesteps all of that. The environment carries the state. Agents are stateless reactive workers. You never need to answer "who should I tell about this?" - you just modify the environment, and whoever cares will notice.
 
 **What you get:**
 
-- **Observability for free** — the environment *is* the log. `ls` the signals directory and see the full system state.
-- **Fault tolerance** — an agent dies, the signal remains, another agent picks it up. No lost messages.
-- **Zero coupling** — add or remove colony types without touching any existing colony's configuration.
-- **Natural load balancing** — spin up more instances of any colony type. They self-organize around available work.
-- **Provenance built in** — every signal is signed by the colony that produced it. Bridges attest transfers. Trust is verifiable.
+- **Observability for free** - the environment *is* the log. `ls` the signals directory and see the full system state.
+- **Fault tolerance** - an agent dies, the signal remains, another agent picks it up. No lost messages.
+- **Zero coupling** - add or remove colony types without touching any existing colony's configuration.
+- **Natural load balancing** - spin up more instances of any colony type. They self-organize around available work.
+- **Provenance built in** - every signal is signed by the colony that produced it. Bridges attest transfers. Trust is verifiable.
 
 ## Quick start
 
@@ -63,7 +63,7 @@ No colony references any other colony. They coordinate entirely through signals 
 
 ### Hosting models
 
-The **environment** (where signals live) is orthogonal to the **host** (where colony code runs). Colony definitions stay the same across all hosts — only the `.host()` call changes.
+The **environment** (where signals live) is orthogonal to the **host** (where colony code runs). Colony definitions stay the same across all hosts, only the `.host()` call changes.
 
 #### Local (default)
 
@@ -151,9 +151,9 @@ npm run demo:repo-maintenance
 
 `mandible dev <config>` runs your colonies and opens a live dashboard in the browser.
 
-- Real-time signal flow — watch signals appear, get claimed, and cascade through colonies
-- Colony status cards — running state, concurrency, claim counts, heartbeat health
-- WebSocket streaming — updates push instantly, no polling
+- Real-time signal flow - watch signals appear, get claimed, and cascade through colonies
+- Colony status cards - running state, concurrency, claim counts, heartbeat health
+- WebSocket streaming - updates push instantly, no polling
 
 ```bash
 mandible dev mandible.config.ts              # default: localhost:4040
@@ -192,11 +192,11 @@ Every colony runtime executes the same loop:
 sense → match rules → claim → execute action → deposit → (others sense)
 ```
 
-1. **Sense** — poll or watch the environment for signals matching the colony's sensor queries.
-2. **Match** — evaluate rules against sensed signals, ordered by priority.
-3. **Claim** — attempt to claim the signal (prevents duplicate work across concurrent agents).
-4. **Act** — execute the matched rule's action (LLM call, shell command, custom function).
-5. **Deposit** — leave new signed signals in the environment as output.
+1. **Sense** - poll or watch the environment for signals matching the colony's sensor queries.
+2. **Match** - evaluate rules against sensed signals, ordered by priority.
+3. **Claim** - attempt to claim the signal (prevents duplicate work across concurrent agents).
+4. **Act** - execute the matched rule's action (LLM call, shell command, custom function).
+5. **Deposit** - leave new signed signals in the environment as output.
 
 Other colonies sense those deposited signals and the cycle continues. Complex workflows emerge from simple local rules.
 
@@ -296,18 +296,18 @@ Action providers wrap external capabilities into a standard interface for colony
 | `withQwenCode` | Quick local agentic coding tasks | Qwen Code CLI |
 | `vllmProvider` / `vllmStructuredProvider` | Local text / JSON generation plugged into `withLLM` / `withStructuredOutput` | vLLM |
 
-`withClaudeCode` is fully wired to the Claude Code SDK — colonies spawn real agent sessions that read files, write code, and run commands. It supports **AWS Bedrock routing** via the `bedrock` config option for enterprise deployments.
+`withClaudeCode` is fully wired to the Claude Code SDK: colonies spawn real agent sessions that read files, write code, and run commands. It supports **AWS Bedrock routing** via the `bedrock` config option for enterprise deployments.
 
 The provider assembles context by walking signal lineage (`caused_by` chains), giving the agent full awareness of the work pipeline state.
 
-**Model tiers, not model IDs.** Every `model` field takes an alias — `'fable' | 'opus' | 'sonnet' | 'haiku'` — that resolves to the current model at call time, or a function of the signal:
+**Model tiers, not model IDs.** Every `model` field takes an alias, `'fable' | 'opus' | 'sonnet' | 'haiku'`, that resolves to the current model at call time, or a function of the signal:
 
 ```typescript
 withClaudeCode({ model: 'opus', prompt })                                  // alias
 withClaudeCode({ model: (s) => s.meta.tags?.includes('hard') ? 'opus' : 'haiku', prompt })
 ```
 
-**Stigmergic model routing.** Instead of a central router, the environment says what a task needs — a GitHub label, a tag from an upstream colony, a mark from a previous failed attempt — and the colony reads it when it acts:
+**Stigmergic model routing.** Instead of a central router, the environment says what a task needs - a GitHub label, a tag from an upstream colony, a mark from a previous failed attempt, and the colony reads it when it acts:
 
 ```typescript
 colony('worker')
@@ -346,10 +346,10 @@ Signal types use a `domain:state` convention and support glob patterns for sensi
 
 Mandible provides cryptographic provenance for signals using `@noble/ed25519`:
 
-- **Colony signing** — each colony generates an Ed25519 keypair and signs every signal it deposits. Signatures cover the semantic content (type, payload, lineage) but not mutable state (concentration, timestamps).
-- **Bridge attestation** — when a signal crosses environments via a bridge, the bridge appends a signed attestation. Each attestation signs over the previous, creating a linked chain of custody.
-- **Trust levels** — signals are classified as `verified` (valid signature + chain), `attested` (bridge chain valid, origin unsigned), `unverified` (no provenance), or `rejected` (verification failed).
-- **Sentinel colonies** — monitor an environment for trust violations and deposit report signals that other colonies can react to.
+- **Colony signing** - each colony generates an Ed25519 keypair and signs every signal it deposits. Signatures cover the semantic content (type, payload, lineage) but not mutable state (concentration, timestamps).
+- **Bridge attestation** - when a signal crosses environments via a bridge, the bridge appends a signed attestation. Each attestation signs over the previous, creating a linked chain of custody.
+- **Trust levels** - signals are classified as `verified` (valid signature + chain), `attested` (bridge chain valid, origin unsigned), `unverified` (no provenance), or `rejected` (verification failed).
+- **Sentinel colonies** - monitor an environment for trust violations and deposit report signals that other colonies can react to.
 
 ## Environment adapters
 
@@ -384,7 +384,7 @@ const env = new GitHubEnvironment({
 
 ### Dolt (implemented)
 
-[Dolt](https://www.dolthub.com/) is a SQL database with Git-like versioning. Signals become rows in a [DoltHub](https://www.dolthub.com/)-hosted database via its HTTP API — no local server, no drivers. Branching gives colonies isolation; diff and merge give critics and keepers a review flow.
+[Dolt](https://www.dolthub.com/) is a SQL database with Git-like versioning. Signals become rows in a [DoltHub](https://www.dolthub.com/) hosted database via its HTTP API - no local server, no drivers. Branching gives colonies isolation; diff and merge give critics and keepers a review flow.
 
 ```typescript
 import { DoltEnvironment } from '@mandible-ai/mandible';
@@ -444,7 +444,7 @@ Reusable coordination patterns built on top of the core primitives. See [Ordered
 
 ### Gate
 
-Ordered phases without a scheduler. A gated signal sits at **concentration 0** — present in the environment but invisible to every sensor that filters on `minConcentration` — until its preconditions exist (or have been withdrawn, i.e. completed). Then the gate activates it.
+Ordered phases without a scheduler. A gated signal sits at **concentration 0** - present in the environment but invisible to every sensor that filters on `minConcentration` until its preconditions exist (or have been withdrawn, i.e. completed). Then the gate activates it.
 
 ```typescript
 import { createGate } from '@mandible-ai/mandible';
@@ -502,7 +502,7 @@ await bridge.start();
 
 ### DebugBridge
 
-One-way gate from a signal server into a local environment. Enables ad-hoc testing from the cloud console — deposit a signal in the console and it flows through the WebSocket into the colony's real environment.
+One-way gate from a signal server into a local environment. Enables ad-hoc testing from the cloud console: deposit a signal in the console and it flows through the WebSocket into the colony's real environment.
 
 ```typescript
 import { createDebugBridge } from '@mandible-ai/mandible';
@@ -617,9 +617,9 @@ examples/
 
 Three colonies coordinate through a shared filesystem environment:
 
-- **Shaper** (concurrency: 2) — picks up `task:ready` signals, produces `artifact:shaped`
-- **Critic** (concurrency: 2) — reviews shaped artifacts, deposits `review:approved` or `review:changes-needed`
-- **Keeper** (concurrency: 1) — merges approved work, deposits `artifact:merged`
+- **Shaper** (concurrency: 2) - picks up `task:ready` signals, produces `artifact:shaped`
+- **Critic** (concurrency: 2) - reviews shaped artifacts, deposits `review:approved` or `review:changes-needed`
+- **Keeper** (concurrency: 1) - merges approved work, deposits `artifact:merged`
 
 Colony definitions live in `colonies.ts` and are shared across all hosting modes:
 
@@ -650,7 +650,7 @@ Both colonies are wired to real Claude agents via `withClaudeCode`. The dashboar
 
 ### Model routing
 
-No API keys needed — the LLM is faked so you can watch the *routing* happen. A classifier marks unlabeled tasks, tag routes send them to the right tier, a flaky "haiku" handler fails once and the retry escalates to "opus", and a task whose last artifact was rejected routes up on lineage alone. Ends by printing the trail each signal carries.
+No API keys needed - the LLM is faked so you can watch the *routing* happen. A classifier marks unlabeled tasks, tag routes send them to the right tier, a flaky "haiku" handler fails once and the retry escalates to "opus", and a task whose last artifact was rejected routes up on lineage alone. Ends by printing the trail each signal carries.
 
 ```bash
 npm run demo:model-routing
