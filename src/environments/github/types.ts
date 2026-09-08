@@ -63,6 +63,8 @@ export interface GitHubReview {
   state: ReviewState;
   body: string | null;
   submitted_at: string;
+  /** The commit the review was written against. */
+  commit_id?: string;
 }
 
 // ----------------------------------------------------------
@@ -197,6 +199,13 @@ export interface GitHubEnvConfig {
 
   /** Whether withdraw() closes GitHub issues. Default: false (destructive) */
   allowWithdraw?: boolean;
+
+  /**
+   * Whether submitReview() may leave reviews on pull requests. Default true:
+   * a colony only reaches for the reviewing capability deliberately. Set false
+   * to run a reviewer against a repository in read-only mode.
+   */
+  allowReview?: boolean;
 
   /** GitHub API base URL. Default: "https://api.github.com" */
   apiBase?: string;

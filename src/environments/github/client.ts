@@ -248,6 +248,50 @@ export class GitHubClient {
     return await response.json() as GitHubReview[];
   }
 
+  /**
+   * The pull request's changes as a unified diff. GitHub returns it from the
+   * pull request itself under a different Accept header, so this is one
+   * request rather than a walk over the changed files.
+   */
+  async fetchDiff(prNumber: number): Promise<string> {
+    const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/pulls/${prNumber}`;
+    const response = await fetch(url, {
+      headers: this.headers({ 'Accept': 'application/vnd.github.v3.diff' }),
+    });
+    this.updateRateLimit(response.headers);
+
+    if (!response.ok) {
+      throw new Error(`GitHub API error fetching diff for PR #${prNumber}: ${response.status}`);
+    }
+
+    return await response.text();
+  }
+
+  /**
+   * Submit a review. `event` is GitHub's own vocabulary; the environment maps
+   * the substrate-neutral verdict onto it.
+   */
+  async createReview(
+    prNumber: number,
+    event: 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES',
+    body: string,
+  ): Promise<void> {
+    const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/pulls/${prNumber}/reviews`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: this.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ event, body }),
+    });
+    this.updateRateLimit(response.headers);
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(
+        `GitHub API error creating review on PR #${prNumber}: ${response.status} ${detail.slice(0, 200)}`
+      );
+    }
+  }
+
   // ----------------------------------------------------------
   // Label-based persistent claims
   // ----------------------------------------------------------

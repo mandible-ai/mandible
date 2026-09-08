@@ -486,6 +486,7 @@ export class ColonyRuntime implements IColonyRuntime {
 
     return {
       colony: colonyName,
+      environment: env,
 
       async deposit(type, payload = {}, options = {}) {
         const signal = await env.deposit({

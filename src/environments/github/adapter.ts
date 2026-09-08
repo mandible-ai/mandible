@@ -10,7 +10,10 @@ import { registerEnvironment } from '../../core/environment-registry.js';
 import { matchesQuery, isClaimExpired } from '../../core/signal.js';
 import { validateSignalInput } from '../../core/validation.js';
 import { GitHubClient } from './client.js';
-import type { GitHubEnvConfig, GitHubIssue, GitHubPullRequest, GitHubReview, GitHubReaction } from './types.js';
+import type { GitHubEnvConfig, GitHubIssue, GitHubPullRequest, GitHubReview, GitHubReaction, ReviewState } from './types.js';
+import type {
+  CodeReviewable, ReviewRecord, ReviewSubmission, ReviewVerdict,
+} from '../../core/review.js';
 import {
   defaultTypeMapper,
   defaultPayloadMapper,
@@ -23,7 +26,27 @@ import {
   computeDependencyBoosts,
 } from './mapper.js';
 
-export class GitHubEnvironment implements SerializableEnvironment {
+/** GitHub's review vocabulary, keyed by the substrate-neutral verdict. */
+const GITHUB_REVIEW_EVENT: Record<ReviewVerdict, 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES'> = {
+  comment: 'COMMENT',
+  approve: 'APPROVE',
+  'request-changes': 'REQUEST_CHANGES',
+};
+
+/**
+ * Reading a review back. DISMISSED and PENDING have no neutral equivalent, and
+ * calling either of them a comment would misreport what a human decided.
+ */
+function verdictFromReviewState(state: ReviewState): ReviewVerdict | 'other' {
+  switch (state) {
+    case 'APPROVED': return 'approve';
+    case 'CHANGES_REQUESTED': return 'request-changes';
+    case 'COMMENTED': return 'comment';
+    default: return 'other';
+  }
+}
+
+export class GitHubEnvironment implements SerializableEnvironment, CodeReviewable {
   readonly name: string;
   /**
    * Declared secret names for remote deployment (default GITHUB_TOKEN —
@@ -601,6 +624,59 @@ export class GitHubEnvironment implements SerializableEnvironment {
   async snapshot(): Promise<Signal[]> {
     await this.ensureInit();
     return Array.from(this.signals.values());
+  }
+
+  // ----------------------------------------------------------
+  // CodeReviewable — a pull request is a change that can be reviewed
+  // ----------------------------------------------------------
+
+  /**
+   * Signals from this repository are `gh:{owner}/{repo}#{number}`. A signal
+   * this environment has seen must also be a pull request: reviewing an issue
+   * is not a thing GitHub can do, and failing here beats a confusing 404.
+   */
+  private pullRequestNumber(signalId: string): number {
+    const number = this.issueNumberFromSignalId(signalId);
+    if (number === null) {
+      throw new Error(`GitHubEnvironment: "${signalId}" is not a signal from ${this.config.owner}/${this.config.repo}`);
+    }
+    const known = this.signals.get(signalId);
+    if (known && !known.type.startsWith('pr:')) {
+      throw new Error(`GitHubEnvironment: "${signalId}" is an issue, not a pull request`);
+    }
+    return number;
+  }
+
+  async fetchDiff(signalId: string): Promise<string> {
+    await this.ensureInit();
+    return this.client.fetchDiff(this.pullRequestNumber(signalId));
+  }
+
+  async listReviews(signalId: string): Promise<ReviewRecord[]> {
+    await this.ensureInit();
+    const reviews = await this.client.fetchReviews(this.pullRequestNumber(signalId));
+    return reviews.map(review => ({
+      author: review.user.login,
+      verdict: verdictFromReviewState(review.state),
+      body: review.body ?? '',
+      revision: review.commit_id,
+      submittedAt: review.submitted_at,
+    }));
+  }
+
+  async submitReview(signalId: string, review: ReviewSubmission): Promise<void> {
+    await this.ensureInit();
+    if (this.config.allowReview === false) {
+      throw new Error('GitHubEnvironment: submitReview is disabled via config');
+    }
+    if (!review.body.trim()) {
+      throw new Error('GitHubEnvironment: a review needs a body');
+    }
+    await this.client.createReview(
+      this.pullRequestNumber(signalId),
+      GITHUB_REVIEW_EVENT[review.verdict],
+      review.body,
+    );
   }
 
   serialize(): EnvironmentConfig {
