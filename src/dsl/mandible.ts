@@ -43,6 +43,8 @@
 //
 // ============================================================
 
+import { isAbsolute, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { ColonyBuilder, colony as colonyBuilder } from './builder.js';
 import type {
   Environment, ColonyDefinition,
@@ -203,8 +205,26 @@ export class MandibleBuilder {
  * Resolve a ColonyModuleRef to a live configurator function via dynamic import.
  * Used by LocalHost to run module-ref-based colonies locally.
  */
+/**
+ * A relative module ref is relative to where the deploy is run from, not to
+ * this file. A bare `import(ref.module)` resolves against *this* module's URL,
+ * which lands inside the installed package -- so `./worker.ts`, exactly what
+ * the docs tell people to write, resolved to
+ * node_modules/@mandible-ai/mandible/dist/src/dsl/worker.ts and failed.
+ *
+ * CloudHost already resolves the same string against process.cwd() when it
+ * bundles, so this is the half that disagreed. Bare specifiers are left alone
+ * so a colony published as a package still imports by name.
+ */
+function moduleRefSpecifier(module: string): string {
+  if (!module.startsWith('.') && !isAbsolute(module)) {
+    return module;
+  }
+  return pathToFileURL(resolve(process.cwd(), module)).href;
+}
+
 async function resolveModuleRef(ref: ColonyModuleRef): Promise<ColonyConfigurator> {
-  const mod = await import(ref.module);
+  const mod = await import(moduleRefSpecifier(ref.module));
   const fn = mod[ref.export];
   if (typeof fn !== 'function') {
     throw new Error(
