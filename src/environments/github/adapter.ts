@@ -46,6 +46,32 @@ function verdictFromReviewState(state: ReviewState): ReviewVerdict | 'other' {
   }
 }
 
+/**
+ * GitHub as a stigmergy substrate.
+ *
+ * The neutral verbs map onto real repository objects, and that mapping is the
+ * whole contract. Nothing here is private bookkeeping: every write is public,
+ * permanent, and visible to people.
+ *
+ *   deposit   opens an issue      a new work item entering the repository
+ *   withdraw  closes an issue     that work item is done or void
+ *   update    sets labels         annotating a work item in place
+ *   claim     a label, or memory  who is working on it (persistentClaims)
+ *
+ * What follows from that, and is the part worth stating because it is easy to
+ * get wrong: **a deposit is a new work item, not a record that work happened.**
+ * `bug:found` is a deposit — someone must now fix it. `review:complete` is not,
+ * and depositing it would open an issue on every review.
+ *
+ * On a forge the artifact you produce is the trace. Post the review and the
+ * review is the mark; the next poll senses it back in the pull request's
+ * payload. A colony that wants to say "I did this" has already said it by
+ * doing it.
+ *
+ * `submitReview` sits outside this list on purpose. Reviewing is not a signal
+ * operation at all, which is why it is a capability (CodeReviewable) rather
+ * than another meaning loaded onto deposit.
+ */
 export class GitHubEnvironment implements SerializableEnvironment, CodeReviewable {
   readonly name: string;
   /**
