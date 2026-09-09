@@ -46,6 +46,26 @@ if (reviews.some(r => r.author === ME && r.revision === head)) return;
 A new push moves the head, so the next poll reviews the new code and only the
 new code.
 
+## Do not deposit a completion signal
+
+`ctx.deposit('review:complete')` is the intention-revealing call, and on GitHub
+it is the wrong one: `deposit` opens an issue, so it would file one on every
+review.
+
+That is not a flaw in the mapping. A deposit into a repository is **a new work
+item**, and an issue is exactly that. `bug:found` deposits correctly, because
+someone now has to fix it. A completion trace is not a work item.
+
+On a forge the artifact you produce is the trace. Post the review and the review
+is the mark: durable, public, and sensed back into the pull request's payload on
+the next poll, where any colony can see the change has been reviewed and in what
+state. A second signal saying so would duplicate it, as an issue.
+
+So a reviewer colony deposits when it finds something that outlives the pull
+request — a defect in code the diff only touched in passing, which will still be
+there after the merge — and stays quiet otherwise. Problems *within* the change
+belong in the review, where the author is already looking.
+
 ## Verdicts
 
 `comment`, `approve` and `request-changes` are the vocabulary. GitHub maps them
