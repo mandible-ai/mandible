@@ -1,7 +1,9 @@
-// PURPOSE: The contract a signal substrate implements when its signals are
-// proposed changes that can be read as a diff and answered with a review.
-// PURPOSE: Keeps a reviewer colony substrate-neutral — it asks to review a
-// signal, rather than knowing which API to POST to.
+// PURPOSE: The contract an environment implements when its signals are proposed
+// changes that can be read as a diff and answered with a review.
+// PURPOSE: Lives beside its only implementer. The shape is substrate-neutral on
+// purpose — a colony asks to review a signal rather than knowing which API to
+// POST to — so a second forge can satisfy it without importing this module, and
+// it moves somewhere shared on the day one does.
 
 /** What a review says about a change. */
 export type ReviewVerdict = 'comment' | 'approve' | 'request-changes';
@@ -32,13 +34,14 @@ export interface ReviewSubmission {
 }
 
 /**
- * CodeReviewable is the slice of an environment a reviewer needs. Signals
- * carry the fact that a change exists; this carries the change itself and the
- * way back to it.
+ * CodeReviewable is the slice of an environment a reviewer needs. Signals carry
+ * the fact that a change exists; this carries the change itself and the way
+ * back to it.
  *
- * Not every substrate can do this, which is why it is a capability rather than
- * part of Environment: a filesystem has no notion of a review, and forcing one
- * on it would mean a method that always throws.
+ * It is a capability rather than part of Environment because almost nothing can
+ * do it: a filesystem has no notion of a review, and putting one on Environment
+ * would mean a method that always throws. It is not in core for the same
+ * reason — a review is a forge's concept, not the framework's.
  */
 export interface CodeReviewable {
   /** The change this signal proposes, as a unified diff. */

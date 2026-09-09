@@ -86,10 +86,10 @@ export { SignalValidationError, validateSignalInput, validateUpdateInput } from 
 export { FilesystemEnvironment } from './environments/filesystem/index.js';
 export { DoltEnvironment } from './environments/dolt/index.js';
 export { GitHubEnvironment } from './environments/github/index.js';
-export { isCodeReviewable } from './core/review.js';
+export { isCodeReviewable } from './environments/github/review.js';
 export type {
   CodeReviewable, ReviewRecord, ReviewSubmission, ReviewVerdict,
-} from './core/review.js';
+} from './environments/github/review.js';
 export type { GitHubEnvConfig } from './environments/github/index.js';
 
 // Default policies
