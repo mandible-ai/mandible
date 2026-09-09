@@ -231,3 +231,35 @@ describe('reviewing capability', () => {
     await expect(github.fetchDiff('fs:/tmp/thing')).rejects.toThrow(/not a signal from o\/r/);
   });
 });
+
+describe('withdraw is not a way to close pull requests', () => {
+  it('is opt-in, as its own documentation says', async () => {
+    serveFixtures({ issues: [issue(5)] });
+    const github = env();
+    await github.sync();
+
+    // The guard used to be `=== false`, so an unset config closed issues. The
+    // canonical colony loop ends in ctx.withdraw().
+    await expect(github.withdraw('gh:o/r#5')).rejects.toThrow(/opt-in/);
+    expect(seen.some(r => r.method === 'PATCH')).toBe(false);
+  });
+
+  it('closes an issue once opted in', async () => {
+    serveFixtures({ issues: [issue(5)] });
+    const github = env({ allowWithdraw: true });
+    await github.sync();
+
+    await github.withdraw('gh:o/r#5');
+
+    expect(seen.some(r => r.method === 'PATCH' && r.url === '/repos/o/r/issues/5')).toBe(true);
+  });
+
+  it('still refuses a pull request, because GitHub would close it', async () => {
+    serveFixtures({ prs: [pullRequest(12)] });
+    const github = env({ allowWithdraw: true });
+    await github.sync();
+
+    await expect(github.withdraw('gh:o/r#12')).rejects.toThrow(/refusing to close pull request/);
+    expect(seen.some(r => r.method === 'PATCH')).toBe(false);
+  });
+});
