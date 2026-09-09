@@ -398,12 +398,26 @@ export class GitHubEnvironment implements SerializableEnvironment, CodeReviewabl
   async withdraw(signalId: string): Promise<void> {
     await this.ensureInit();
 
-    if (this.config.allowWithdraw === false) {
-      throw new Error('GitHubEnvironment: withdraw (issue closing) is disabled via config');
+    // Opt-in, as documented. This used to read `=== false`, so an unset config
+    // closed issues: the canonical colony loop ends in ctx.withdraw(), and a
+    // colony sensing pull requests would close them without anyone asking.
+    if (this.config.allowWithdraw !== true) {
+      throw new Error(
+        'GitHubEnvironment: withdraw closes a GitHub issue and is opt-in — set allowWithdraw: true'
+      );
     }
 
     const issueNumber = this.issueNumberFromSignalId(signalId);
     if (issueNumber !== null) {
+      // GitHub's issues endpoint accepts a pull request number, so closing
+      // "issue #12" closes pull request #12. Opting into closing issues is not
+      // opting into closing someone's pull request.
+      const known = this.signals.get(signalId);
+      if (known && known.type.startsWith('pr:')) {
+        throw new Error(
+          `GitHubEnvironment: refusing to close pull request ${signalId} — withdraw closes issues, not pull requests`
+        );
+      }
       await this.client.closeIssue(issueNumber);
     }
 
