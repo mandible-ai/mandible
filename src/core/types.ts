@@ -365,6 +365,17 @@ export interface ActionContext {
   /** The colony name performing this action */
   colony: string;
 
+  /**
+   * The substrate this colony is acting in.
+   *
+   * Most actions never need it: deposit, withdraw and enrich are the
+   * substrate-neutral verbs and cover the usual work. Reach for this when an
+   * action needs a capability only some substrates have — reviewing a proposed
+   * change, say — and narrow it with that capability's type guard rather than
+   * casting.
+   */
+  environment: Environment;
+
   /** Deposit a new signal into the environment */
   deposit(
     type: string,

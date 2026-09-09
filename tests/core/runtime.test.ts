@@ -66,6 +66,22 @@ function buildColony(
   return builder.build();
 }
 
+// ── Action context ──────────────────────────────────────────
+
+describe('runtime — action context', () => {
+  it('hands the action the substrate it is acting in', async () => {
+    let seen: unknown;
+    const rt = createRuntime(buildColony(async (_signal, ctx) => { seen = ctx.environment; }));
+    await depositTask('a');
+    await rt.start();
+    await sleep(300);
+    await rt.stop();
+    // Capabilities only some substrates have — reviewing a change, say — are
+    // reached by narrowing this, so an action must actually receive it.
+    expect(seen).toBe(env);
+  });
+});
+
 // ── Lifecycle ───────────────────────────────────────────────
 
 describe('runtime — lifecycle', () => {
