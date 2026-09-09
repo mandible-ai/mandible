@@ -13,7 +13,7 @@ import { GitHubClient } from './client.js';
 import type { GitHubEnvConfig, GitHubIssue, GitHubPullRequest, GitHubReview, GitHubReaction, ReviewState } from './types.js';
 import type {
   CodeReviewable, ReviewRecord, ReviewSubmission, ReviewVerdict,
-} from '../../core/review.js';
+} from './review.js';
 import {
   defaultTypeMapper,
   defaultPayloadMapper,

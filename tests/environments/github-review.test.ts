@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { GitHubEnvironment } from '../../src/environments/github/adapter.js';
-import { isCodeReviewable } from '../../src/core/review.js';
+import { isCodeReviewable } from '../../src/environments/github/review.js';
 import type { GitHubIssue, GitHubPullRequest, GitHubReview } from '../../src/environments/github/types.js';
 
 let server: Server;
