@@ -497,3 +497,32 @@ mandible('sdlc-local')
 
   .start();
 ```
+
+## Serving Local Inference to Cloud Colonies
+
+The providers above assume the colony and the model share a machine. On
+Mandible Cloud the same local hardware can serve colonies running in zones:
+expose the vLLM endpoint through a **SPIFFE-gated inference gateway** (a
+small mTLS front that refuses any connection not presenting an allowlisted
+SPIFFE identity chained to the platform's trust roots), publish it through a
+raw TCP relay such as an ngrok TLS endpoint, and register it as a LiteLLM
+model group. The gateway, its installer, and the relay configuration live in
+the `mandible-cloud` repository (ADR-017, `deploy/hosts/inference/`).
+
+Once registered, zone colonies need no special provider — the model group is
+reachable through the injected gateway credentials like any other model, and
+the `local` tier alias tracks it:
+
+```typescript
+colony('summarizer')
+  .do('summarize', withLLM({
+    model: 'local', // → the gateway's local model group ('nemotron' by default)
+    provider: 'openai', // zones route this through the metered model gateway
+    prompt: (signal) => `Summarize:\n${signal.payload.content}`,
+    route: 'summary:ready',
+  }))
+  .build();
+```
+
+Override per deployment with `MANDIBLE_MODEL_LOCAL=<model-group>` when the
+gateway serves a different group name.
