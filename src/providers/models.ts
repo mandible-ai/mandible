@@ -11,6 +11,9 @@
 //   'opus'   → frontier reasoning / agentic work
 //   'sonnet' → balanced default
 //   'haiku'  → fast and cheap
+//   'local'  → self-hosted open model served through the platform's
+//              model gateway (conserves frontier spend; the group name
+//              is whatever the gateway registered, 'nemotron' by default)
 //
 // Resolution order for an alias:
 //   1. setModelAliases() overrides (programmatic)
@@ -27,6 +30,7 @@ export const MODEL_ALIASES = {
   opus: 'claude-opus-5',
   sonnet: 'claude-sonnet-5',
   haiku: 'claude-haiku-4-5',
+  local: 'nemotron',
 } as const;
 
 export type ModelAlias = keyof typeof MODEL_ALIASES;
