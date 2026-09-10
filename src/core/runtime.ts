@@ -32,12 +32,32 @@ import { DEFAULT_DECAY_POLICY } from './types.js';
 import { EventBus, type RuntimeEventData, type RuntimeEventCallback } from './events.js';
 import { ColonyScaler } from './scaler.js';
 
+/**
+ * The ceiling on an action when the colony named neither a timeout nor a
+ * claim lease. Generous, because it exists to stop a wedged colony rather
+ * than to discipline a slow one.
+ */
+const DEFAULT_ACTION_BUDGET_MS = 10 * 60_000;
+
+/**
+ * How many polls in a row may find every slot busy before it is worth saying
+ * so. Being busy is normal; being busy this many times running means the
+ * colony has stopped sensing, and an operator cannot see that from silence.
+ */
+const STARVATION_POLLS = 10;
+
 type EventHandler = (...args: any[]) => void;
 
 export class ColonyRuntime implements IColonyRuntime {
   private definition: ColonyDefinition;
   private _state: RuntimeState = 'idle';
   private _activeCount = 0;
+  /** Consecutive polls that found every slot busy, for starvation reporting. */
+  private _atCapacityPolls = 0;
+  private _starvedSince: number | null = null;
+  private _starvedReported = false;
+  /** When each in-flight signal started, so a stall can name what holds it. */
+  private readonly activeSince = new Map<string, number>();
   private _stats: RuntimeStats = {
     signalsSensed: 0,
     signalsClaimed: 0,
@@ -204,7 +224,15 @@ export class ColonyRuntime implements IColonyRuntime {
 
     const poll = async () => {
       if (this._state !== 'running') return;
-      if (this._activeCount >= this._effectiveConcurrency) return; // at capacity
+      if (this._activeCount >= this._effectiveConcurrency) {
+        // Being busy is normal; being busy every time for a long stretch is a
+        // colony that has stopped sensing. Say so once, naming what is holding
+        // the slots, rather than going quiet and looking healthy.
+        this.reportIfStarved();
+        return;
+      }
+      this._atCapacityPolls = 0;
+      this._starvedSince = null;
 
       try {
         const signals = await this.definition.environment.observe({
@@ -267,6 +295,7 @@ export class ColonyRuntime implements IColonyRuntime {
   private async processSignal(signal: Signal): Promise<void> {
     this.processingSignals.add(signal.id);
     this._activeCount++;
+    this.activeSince.set(signal.id, Date.now());
     const startTime = Date.now();
     const colonyName = this.definition.name;
 
@@ -299,7 +328,7 @@ export class ColonyRuntime implements IColonyRuntime {
 
       // 3. Claim (if strategy requires it)
       if (this.definition.claimStrategy !== 'none') {
-        const leaseDuration = this.definition.config?.actionTimeout ?? 60_000;
+        const leaseDuration = this.actionBudgetMs();
         const claimed = await this.definition.environment.claim(
           signal.id,
           colonyName,
@@ -412,8 +441,51 @@ export class ColonyRuntime implements IColonyRuntime {
       this.totalProcessingMs += elapsed;
       this._stats.avgProcessingMs = this.totalProcessingMs / Math.max(1, this._stats.signalsProcessed);
       this.processingSignals.delete(signal.id);
+      this.activeSince.delete(signal.id);
       this._activeCount--;
+      this._starvedReported = false;
     }
+  }
+
+  /**
+   * Warn when every slot has been held long enough that the colony is no
+   * longer doing what it was deployed to do. Once per stretch, not per poll.
+   */
+  private reportIfStarved(): void {
+    const now = Date.now();
+    this._atCapacityPolls++;
+    if (this._starvedSince === null) this._starvedSince = now;
+    if (this._starvedReported) return;
+    // Counted in the colony's own polls rather than a wall-clock constant, so
+    // the threshold scales with how often this colony expects to find work.
+    if (this._atCapacityPolls < STARVATION_POLLS) return;
+
+    this._starvedReported = true;
+    const held = [...this.activeSince.entries()]
+      .map(([id, since]) => `${id} (${Math.round((now - since) / 1000)}s)`)
+      .join(', ');
+    this.log(
+      'warn',
+      `Colony "${this.definition.name}" has been at capacity `
+      + `(${this._activeCount}/${this._effectiveConcurrency}) for `
+      + `${Math.round((now - this._starvedSince) / 1000)}s and is not sensing. `
+      + `Holding: ${held || 'unknown'}`,
+    );
+  }
+
+  /**
+   * How long one action may run, and how long its claim is held.
+   *
+   * `actionTimeout` wins when set. Otherwise the claim lease: a colony that
+   * says `.claim('lease', 600_000)` has already declared how long it expects
+   * to hold a piece of work, and an action outliving its own claim is one the
+   * environment considers abandoned — another agent may hold it by then, so
+   * finishing writes a result nobody is waiting for.
+   */
+  private actionBudgetMs(): number {
+    return this.definition.config?.actionTimeout
+      ?? this.definition.claimLease
+      ?? DEFAULT_ACTION_BUDGET_MS;
   }
 
   // ----------------------------------------------------------
@@ -451,18 +523,17 @@ export class ColonyRuntime implements IColonyRuntime {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        // Apply timeout if configured
-        const timeout = this.definition.config?.actionTimeout;
-        if (timeout) {
-          await Promise.race([
-            rule.do(signal, ctx),
-            sleep(timeout).then(() => {
-              throw new Error(`Action "${rule.name}" timed out after ${timeout}ms`);
-            }),
-          ]);
-        } else {
-          await rule.do(signal, ctx);
-        }
+        // Always bounded, never optional. An action with no ceiling holds its
+        // concurrency slot for the life of the process — one request on a
+        // connection that died without closing is enough — and a colony whose
+        // slots are all held stops sensing without ever saying so.
+        const timeout = this.actionBudgetMs();
+        await Promise.race([
+          rule.do(signal, ctx),
+          sleep(timeout).then(() => {
+            throw new Error(`Action "${rule.name}" timed out after ${timeout}ms`);
+          }),
+        ]);
         return; // success
       } catch (err) {
         if (attempt === maxAttempts) throw err;

@@ -2336,3 +2336,33 @@ describe('GitHubEnvironment — backpressure watch', () => {
     expect(received.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+
+// ── Request deadlines ───────────────────────────────────────
+// A request on a connection that dies without closing otherwise never
+// settles, and the colony awaiting it holds its concurrency slot for the
+// life of the process. That is how a reviewer colony went silent for two
+// hours while still reporting itself running.
+describe('every request to the forge has a deadline', () => {
+  it('gives up rather than waiting forever', async () => {
+    const original = globalThis.fetch;
+    // Never resolves on its own; only the abort signal ends it.
+    globalThis.fetch = ((_url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        const err = new Error('aborted');
+        err.name = 'TimeoutError';
+        reject(err);
+      });
+    })) as typeof fetch;
+
+    try {
+      const env = new GitHubEnvironment({
+        owner: 'o', repo: 'r', token: 't',
+        requestTimeoutMs: 60,
+      });
+      await expect(env.observe({ type: 'issue:*' })).rejects.toThrow(/timed out after 60ms/);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});

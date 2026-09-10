@@ -316,6 +316,13 @@ export interface ColonyDefinition<T = Record<string, unknown>> {
   /** How to handle contention for the same signal */
   claimStrategy: ClaimStrategy;
 
+  /**
+   * How long a claim is held, in ms, as given to `.claim(strategy, ms)`.
+   * Also bounds how long a single action may run: an action outliving its own
+   * claim is one the environment already considers abandoned.
+   */
+  claimLease?: number;
+
   /** Colony-level configuration */
   config?: ColonyConfig;
 
