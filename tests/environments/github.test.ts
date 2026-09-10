@@ -1773,15 +1773,47 @@ describe('resolveReviewState', () => {
     expect(resolveReviewState(reviews)).toBe('approved');
   });
 
-  it('returns pending for only COMMENTED reviews', () => {
+  // 'pending' means nobody has looked. Somebody has looked.
+  it('returns commented when the only reviews are comments', () => {
     const reviews: GitHubReview[] = [
       makeReview({ user: { login: 'alice' }, state: 'COMMENTED' }),
+    ];
+    expect(resolveReviewState(reviews)).toBe('commented');
+  });
+
+  it('does not let a comment outrank a verdict', () => {
+    const approved: GitHubReview[] = [
+      makeReview({ user: { login: 'alice' }, state: 'APPROVED', submitted_at: '2025-01-01T00:00:00Z' }),
+      makeReview({ user: { login: 'bob' }, state: 'COMMENTED', submitted_at: '2025-01-02T00:00:00Z' }),
+    ];
+    expect(resolveReviewState(approved)).toBe('approved');
+
+    const blocked: GitHubReview[] = [
+      makeReview({ user: { login: 'alice' }, state: 'CHANGES_REQUESTED', submitted_at: '2025-01-01T00:00:00Z' }),
+      makeReview({ user: { login: 'bob' }, state: 'COMMENTED', submitted_at: '2025-01-02T00:00:00Z' }),
+    ];
+    expect(resolveReviewState(blocked)).toBe('changes-requested');
+  });
+
+  it('still reports pending when a dismissed review is all there is', () => {
+    const reviews: GitHubReview[] = [
+      makeReview({ user: { login: 'alice' }, state: 'DISMISSED' }),
     ];
     expect(resolveReviewState(reviews)).toBe('pending');
   });
 });
 
 describe('defaultPRTypeMapper', () => {
+  // A comment is not a disposition. If it displaced pr:open the pull request
+  // would vanish from every reviewer colony's sensor the moment anyone
+  // commented on it, which is the opposite of making the review visible.
+  it('leaves an open pull request open when it has only been commented on', () => {
+    const commented = [makeReview({ user: { login: 'alice' }, state: 'COMMENTED' })];
+    expect(defaultPRTypeMapper(makePR(), commented)).toBe('pr:open');
+    expect(defaultPRTypeMapper(makePR({ requested_reviewers: [{ login: 'bob' }] }), commented))
+      .toBe('pr:review-requested');
+  });
+
   it('maps draft PR to pr:draft', () => {
     expect(defaultPRTypeMapper(makePR({ draft: true }), [])).toBe('pr:draft');
   });
@@ -1836,6 +1868,16 @@ describe('defaultPRPayloadMapper', () => {
     expect(r.reviewState).toBe('approved');
     expect(r.reviewCount).toBe(1);
     expect(r.reviewers).toEqual(['alice']);
+  });
+
+  // Without this a colony has to call listReviews to find out which commit a
+  // review was written against, which is the state the signal should carry.
+  it('says which commit the latest review was written against', () => {
+    const reviews = [makeReview({ user: { login: 'alice' }, state: 'COMMENTED', commit_id: 'abc1234' })];
+    const payload = defaultPRPayloadMapper(makePR(), reviews);
+    const r = payload.reviews as Record<string, unknown>;
+    expect(r.reviewState).toBe('commented');
+    expect((r.latestReview as Record<string, unknown>).revision).toBe('abc1234');
   });
 
   it('omits review summary when no reviews', () => {

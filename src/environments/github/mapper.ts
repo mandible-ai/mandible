@@ -291,7 +291,7 @@ export function computeReactionScore(
  * Determines the latest review verdict for a PR.
  * Only considers the most recent review per reviewer.
  */
-export function resolveReviewState(reviews: GitHubReview[]): 'approved' | 'changes-requested' | 'review-requested' | 'pending' {
+export function resolveReviewState(reviews: GitHubReview[]): 'approved' | 'changes-requested' | 'commented' | 'review-requested' | 'pending' {
   if (reviews.length === 0) return 'pending';
 
   // Most recent review per reviewer wins
@@ -306,6 +306,11 @@ export function resolveReviewState(reviews: GitHubReview[]): 'approved' | 'chang
   const verdicts = Array.from(latestByUser.values());
   if (verdicts.some(r => r.state === 'CHANGES_REQUESTED')) return 'changes-requested';
   if (verdicts.some(r => r.state === 'APPROVED')) return 'approved';
+  // A comment is not a verdict, but it is not nothing either: reporting
+  // 'pending' here says nobody has looked at a pull request somebody has
+  // already reviewed. An automated reviewer should submit 'comment' rather
+  // than cast a vote, so this is the state its work lands in.
+  if (verdicts.some(r => r.state === 'COMMENTED')) return 'commented';
   return 'pending';
 }
 
@@ -333,7 +338,9 @@ export function defaultPRTypeMapper(pr: GitHubPullRequest, reviews: GitHubReview
     if (labelNames.has(cat)) return `pr:${cat}`;
   }
 
-  // Review state
+  // Review state. Only a verdict changes the type: 'commented' deliberately
+  // falls through, because displacing pr:open would hide the pull request from
+  // every reviewer colony the moment anyone commented on it.
   const reviewState = resolveReviewState(reviews);
   if (reviewState === 'approved') return 'pr:approved';
   if (reviewState === 'changes-requested') return 'pr:changes-requested';
@@ -356,6 +363,9 @@ export function defaultPRPayloadMapper(pr: GitHubPullRequest, reviews: GitHubRev
       user: reviews[reviews.length - 1].user.login,
       state: reviews[reviews.length - 1].state,
       submitted_at: reviews[reviews.length - 1].submitted_at,
+      // The commit the review was written against. Without it a colony has to
+      // call listReviews to learn whether a review covers the current head.
+      revision: reviews[reviews.length - 1].commit_id,
     } : undefined,
   } : undefined;
 
