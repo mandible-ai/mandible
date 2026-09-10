@@ -116,7 +116,13 @@ export class ColonyBuilder<T = Record<string, unknown>> {
     return this;
   }
 
-  /** Set the claim strategy */
+  /**
+   * Set the claim strategy, and how long a claim is held.
+   *
+   * The lease is also the longest a single action may run: an action still
+   * going after its claim has expired is one another agent may already have
+   * taken, so finishing it writes a result nobody is waiting for.
+   */
   claim(strategy: ClaimStrategy, leaseDuration?: number): this {
     this._claimStrategy = strategy;
     if (leaseDuration) this._claimLease = leaseDuration;
@@ -192,6 +198,7 @@ export class ColonyBuilder<T = Record<string, unknown>> {
       rules: this._rules,
       concurrency: this._concurrency,
       claimStrategy: this._claimStrategy,
+      claimLease: this._claimLease,
       config: this._config,
       resources: this._resources,
     };

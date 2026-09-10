@@ -92,6 +92,9 @@ export type PRConcentrationMapper = (pr: GitHubPullRequest, reviews: GitHubRevie
 // ----------------------------------------------------------
 
 export interface GitHubEnvConfig {
+  /** How long any one request to the forge may take (default 30s). */
+  requestTimeoutMs?: number;
+
   /**
    * Secret names this environment declares for remote deployment. Defaults
    * to ['GITHUB_TOKEN']: tokens never travel in serialized config, so a

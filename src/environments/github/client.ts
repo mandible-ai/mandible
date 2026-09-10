@@ -15,6 +15,15 @@ export interface FetchResult {
   rateLimit: RateLimitInfo;
 }
 
+/**
+ * How long any one call to the forge may take.
+ *
+ * A request on a connection that dies without closing — a dropped NAT
+ * mapping, a path that goes away mid-flight — otherwise never settles. The
+ * colony awaiting it holds its concurrency slot for the life of the process.
+ */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 export class GitHubClient {
   private readonly baseUrl: string;
   private readonly owner: string;
@@ -23,13 +32,31 @@ export class GitHubClient {
   private readonly labels: string[];
   private _etag: string | null = null;
   private _rateLimit: RateLimitInfo = { remaining: 5000, limit: 5000, reset: 0 };
+  private readonly requestTimeoutMs: number;
 
   constructor(config: GitHubEnvConfig) {
     this.baseUrl = (config.apiBase ?? 'https://api.github.com').replace(/\/$/, '');
+    this.requestTimeoutMs = config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.owner = config.owner;
     this.repo = config.repo;
     this.token = config.token ?? process.env.GITHUB_TOKEN;
     this.labels = config.labels ?? [];
+  }
+
+  /**
+   * fetch with a deadline. Every call to the forge goes through here: the
+   * platform default is no timeout at all, which turns one stalled connection
+   * into a colony that never senses again.
+   */
+  private async fetchWithDeadline(url: string, init: RequestInit = {}): Promise<Response> {
+    try {
+      return await fetch(url, { ...init, signal: AbortSignal.timeout(this.requestTimeoutMs) });
+    } catch (err) {
+      if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+        throw new Error(`GitHub request timed out after ${this.requestTimeoutMs}ms: ${url}`);
+      }
+      throw err;
+    }
   }
 
   get rateLimitInfo(): RateLimitInfo {
@@ -92,7 +119,7 @@ export class GitHubClient {
       extraHeaders['If-None-Match'] = this._etag;
     }
 
-    const response = await fetch(url, { headers: this.headers(extraHeaders) });
+    const response = await this.fetchWithDeadline(url, { headers: this.headers(extraHeaders) });
     this.updateRateLimit(response.headers);
 
     // 304 Not Modified — no changes
@@ -119,7 +146,7 @@ export class GitHubClient {
     // Handle pagination
     let nextUrl = this.parseNextLink(response.headers.get('link'));
     while (nextUrl) {
-      const pageResponse = await fetch(nextUrl, { headers: this.headers() });
+      const pageResponse = await this.fetchWithDeadline(nextUrl, { headers: this.headers() });
       this.updateRateLimit(pageResponse.headers);
 
       if (!pageResponse.ok) break;
@@ -150,7 +177,7 @@ export class GitHubClient {
     if (body) payload.body = body;
     if (labels && labels.length > 0) payload.labels = labels;
 
-    const response = await fetch(url, {
+    const response = await this.fetchWithDeadline(url, {
       method: 'POST',
       headers: this.headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(payload),
@@ -172,7 +199,7 @@ export class GitHubClient {
   async closeIssue(issueNumber: number): Promise<void> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}`;
 
-    const response = await fetch(url, {
+    const response = await this.fetchWithDeadline(url, {
       method: 'PATCH',
       headers: this.headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ state: 'closed' }),
@@ -207,7 +234,7 @@ export class GitHubClient {
       extraHeaders['If-None-Match'] = this._prEtag;
     }
 
-    const response = await fetch(url, { headers: this.headers(extraHeaders) });
+    const response = await this.fetchWithDeadline(url, { headers: this.headers(extraHeaders) });
     this.updateRateLimit(response.headers);
 
     if (response.status === 304) {
@@ -225,7 +252,7 @@ export class GitHubClient {
 
     let nextUrl = this.parseNextLink(response.headers.get('link'));
     while (nextUrl) {
-      const pageResponse = await fetch(nextUrl, { headers: this.headers() });
+      const pageResponse = await this.fetchWithDeadline(nextUrl, { headers: this.headers() });
       this.updateRateLimit(pageResponse.headers);
       if (!pageResponse.ok) break;
       const pagePRs = await pageResponse.json() as GitHubPullRequest[];
@@ -238,7 +265,7 @@ export class GitHubClient {
 
   async fetchReviews(prNumber: number): Promise<GitHubReview[]> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/pulls/${prNumber}/reviews?per_page=100`;
-    const response = await fetch(url, { headers: this.headers() });
+    const response = await this.fetchWithDeadline(url, { headers: this.headers() });
     this.updateRateLimit(response.headers);
 
     if (!response.ok) {
@@ -255,7 +282,7 @@ export class GitHubClient {
    */
   async fetchDiff(prNumber: number): Promise<string> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/pulls/${prNumber}`;
-    const response = await fetch(url, {
+    const response = await this.fetchWithDeadline(url, {
       headers: this.headers({ 'Accept': 'application/vnd.github.v3.diff' }),
     });
     this.updateRateLimit(response.headers);
@@ -277,7 +304,7 @@ export class GitHubClient {
     body: string,
   ): Promise<void> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/pulls/${prNumber}/reviews`;
-    const response = await fetch(url, {
+    const response = await this.fetchWithDeadline(url, {
       method: 'POST',
       headers: this.headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ event, body }),
@@ -298,7 +325,7 @@ export class GitHubClient {
 
   async addLabel(issueNumber: number, label: string): Promise<void> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/labels`;
-    const response = await fetch(url, {
+    const response = await this.fetchWithDeadline(url, {
       method: 'POST',
       headers: this.headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ labels: [label] }),
@@ -312,7 +339,7 @@ export class GitHubClient {
 
   async setLabels(issueNumber: number, labels: string[]): Promise<void> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/labels`;
-    const response = await fetch(url, {
+    const response = await this.fetchWithDeadline(url, {
       method: 'PUT',
       headers: this.headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ labels }),
@@ -326,7 +353,7 @@ export class GitHubClient {
 
   async removeLabel(issueNumber: number, label: string): Promise<void> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/labels/${encodeURIComponent(label)}`;
-    const response = await fetch(url, {
+    const response = await this.fetchWithDeadline(url, {
       method: 'DELETE',
       headers: this.headers(),
     });
@@ -340,7 +367,7 @@ export class GitHubClient {
 
   async getLabels(issueNumber: number): Promise<Array<{ name: string }>> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/labels`;
-    const response = await fetch(url, { headers: this.headers() });
+    const response = await this.fetchWithDeadline(url, { headers: this.headers() });
     this.updateRateLimit(response.headers);
 
     if (!response.ok) {
@@ -356,7 +383,7 @@ export class GitHubClient {
 
   async fetchReactions(issueNumber: number): Promise<GitHubReaction[]> {
     const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/issues/${issueNumber}/reactions?per_page=100`;
-    const response = await fetch(url, {
+    const response = await this.fetchWithDeadline(url, {
       headers: this.headers({ 'Accept': 'application/vnd.github.squirrel-girl-preview+json' }),
     });
     this.updateRateLimit(response.headers);
