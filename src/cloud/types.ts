@@ -54,6 +54,8 @@ export interface DeployColonyConfig {
   moduleRef?: { export: string; args?: unknown[] };
   /** Declared tenant secret names. Names only, never values. */
   secrets?: string[];
+  /** Declared model names, for a host that scopes credentials per colony. */
+  models?: string[];
 }
 
 /**
@@ -73,6 +75,15 @@ export interface ColonyModuleRef {
   args?: unknown[];
   /** Tenant secret names this colony declares; supplied via process.env at runtime */
   secrets?: string[];
+  /**
+   * Models this colony declares it needs, by bare name or by the host's own
+   * group naming. Omitting it means whatever the project holds; naming them
+   * asks the host to issue a credential scoped to those alone.
+   *
+   * Declared beside `secrets` because it is the same kind of statement: what
+   * this colony's work requires, so it can be given that and nothing more.
+   */
+  models?: string[];
 }
 
 

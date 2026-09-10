@@ -71,3 +71,28 @@ describe('module refs resolve from the working directory', () => {
     ).rejects.toThrow(/configureMissing/);
   });
 });
+
+// A colony declares the access its work requires — secrets, and the models it
+// will spend on — so a host can issue a credential scoped to that and no more.
+describe('a colony declares the models it needs', () => {
+  it('keeps the declaration on the entry, next to the secrets one', () => {
+    const app = mandible('scoped')
+      .colony('implementer', {
+        module: './implementer.ts',
+        export: 'configureImplementer',
+        secrets: ['GITHUB_TOKEN'],
+        models: ['claude-opus-5'],
+      });
+
+    const entry = app.colonyEntries[0];
+    expect(entry.moduleRef?.models).toEqual(['claude-opus-5']);
+    expect(entry.moduleRef?.secrets).toEqual(['GITHUB_TOKEN']);
+  });
+
+  it('is absent when the colony asks for nothing in particular', () => {
+    const app = mandible('open')
+      .colony('reviewer', { module: './c.ts', export: 'configureReviewer' });
+
+    expect(app.colonyEntries[0].moduleRef?.models).toBeUndefined();
+  });
+});
