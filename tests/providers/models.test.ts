@@ -16,6 +16,7 @@ afterEach(() => {
   resetModelAliases();
   delete process.env.MANDIBLE_MODEL_OPUS;
   delete process.env.MANDIBLE_MODEL_SONNET;
+  delete process.env.MANDIBLE_MODEL_LOCAL;
 });
 
 describe('MODEL_ALIASES', () => {
@@ -36,6 +37,15 @@ describe('resolveModel', () => {
     expect(resolveModel('opus')).toBe(MODEL_ALIASES.opus);
     expect(resolveModel('sonnet')).toBe(MODEL_ALIASES.sonnet);
     expect(resolveModel('haiku')).toBe(MODEL_ALIASES.haiku);
+    expect(resolveModel('local')).toBe(MODEL_ALIASES.local);
+  });
+
+  it('local tier points at a gateway model group, overridable per deployment', () => {
+    // 'local' resolves to a LiteLLM model group name, not a provider model
+    // ID — the gateway decides what actually serves it (ADR-017).
+    expect(resolveModel('local')).toBe('nemotron');
+    process.env.MANDIBLE_MODEL_LOCAL = 'qwen3-coder';
+    expect(resolveModel('local')).toBe('qwen3-coder');
   });
 
   it('passes full model IDs through unchanged', () => {
