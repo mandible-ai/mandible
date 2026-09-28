@@ -290,6 +290,7 @@ Action providers wrap external capabilities into a standard interface for colony
 | `withClassifier` | Leave `complexity:*` / `kind:*` marks on unlabeled tasks | Anthropic, OpenAI, Vercel AI SDK |
 | `withLLM` | Summaries, prose, open-ended text (no schema) | Anthropic, OpenAI, Bedrock, Gemini, Vercel AI SDK |
 | `withSkill` | Colonies driven by markdown skill files | Any LLM provider |
+| `withDroid` | Factory droids on Factory-hosted or BYOK models (gateway-metered in zones) | Factory `droid` CLI |
 | `withOpenCode` | Provider-agnostic agentic coding | OpenCode SDK |
 | `withOpenHands` | Sandboxed agentic coding for CI/DevOps | OpenHands self-hosted API |
 | `withToolLoop` | Agentic tool-calling loop on local models | vLLM (OpenAI-compatible) |
@@ -566,6 +567,7 @@ src/
     classifier.ts       withClassifier — marks unlabeled tasks for routing
     llm.ts              withLLM — plain-text generation; zone gateway model-group resolution
     skill.ts            withSkill — markdown skill files as colony behavior
+    droid.ts            withDroid — Factory droid exec wrapper (hosted or BYOK models)
     opencode.ts         withOpenCode — OpenCode SDK agentic coding
     openhands.ts        withOpenHands — OpenHands sandboxed agentic coding
     tool-loop.ts        withToolLoop — tool-calling loop against local vLLM
@@ -585,13 +587,13 @@ tests/
   environments/         Filesystem, GitHub, Dolt adapter tests
   patterns/             Gate, barrier, debug-bridge tests
   dsl/                  DSL and mandible() builder tests
-  providers/            Claude Code, structured output, LLM, Gemini, Bedrock, vLLM, tool loop, OpenCode, OpenHands, skill tests
+  providers/            Claude Code, droid, structured output, LLM, Gemini, Bedrock, vLLM, tool loop, OpenCode, OpenHands, skill tests
   colonies/             Integration tests for colony workflows
 
 docs/
   how-to/
     bridge-signals.md   SignalBridge + DebugBridge usage guide
-    action-providers.md withClaudeCode, withStructuredOutput, withBash reference
+    action-providers.md withClaudeCode, withDroid, withStructuredOutput, withBash reference
     model-routing.md    Model aliases, dynamic model, withModelRouter, withClassifier
     monitor-trust.md    Sentinel pattern + trust policies
     custom-environment.md Implementing the Environment interface

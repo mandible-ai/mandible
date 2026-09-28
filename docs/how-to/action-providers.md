@@ -2,11 +2,12 @@
 
 Action providers are factories that return standard `(signal, ctx) => Promise<void>` action handlers. Each colony uses the minimum intelligence it needs — a Shaper gets a full coding agent, a Critic gets structured output, a Keeper gets a shell command. Cost and latency stay proportional to task complexity.
 
-Three built-in providers:
+Four built-in providers:
 
 | Provider | Use case | Backed by |
 |----------|----------|-----------|
 | `withClaudeCode` | Coding agents, complex reasoning | Claude Code SDK |
+| `withDroid` | Coding agents on Factory-hosted or bring-your-own models | Factory `droid exec` CLI |
 | `withStructuredOutput` | Classification, review, decisions | Anthropic, OpenAI, Bedrock, Vercel AI, custom |
 | `withBash` | Build commands, test runners, deploys | Shell execution |
 
@@ -151,6 +152,113 @@ interface AgentResult {
 ```
 
 This result becomes the default payload when depositing output signals.
+
+---
+
+## withDroid
+
+Runs a [Factory](https://factory.ai) droid headlessly (`droid exec`). Like `withClaudeCode`, the droid reads files, edits code and runs commands on its own; the provider parses droid's `stream-json` events into a result and deposits it.
+
+### Prerequisites
+
+```bash
+npm install -g @factory/cli   # provides the `droid` binary
+export FACTORY_API_KEY=fk-...  # only for Factory-hosted models
+```
+
+### Configuration
+
+```typescript
+import { withDroid } from '@mandible-ai/mandible/providers';
+
+colony('reviewers')
+  .sense('pr:needs-review', { unclaimed: true })
+  .do('review', withDroid({
+    prompt: (signal) => `Review PR #${signal.payload.pr} for security issues.`,
+    workingDirectory: '/workspace/repo',
+    model: 'sonnet',                       // alias or model id; can be (signal) => string
+    autonomy: 'read-only',                 // 'read-only' | 'low' | 'medium' | 'high' | 'unsafe'
+    tools: { only: ['Read', 'LS', 'Grep', 'Glob'] },
+    output: (result, signal) => ({
+      type: result.success ? 'review:done' : 'review:failed',
+      payload: { pr: signal.payload.pr, review: result.text },
+    }),
+  }))
+  .build();
+```
+
+| Option | Default | Maps to |
+|--------|---------|---------|
+| `autonomy` | `'medium'` | `--auto <level>`; `'read-only'` passes no flag, `'unsafe'` is `--skip-permissions-unsafe` |
+| `tools.only` / `.add` / `.remove` | — | `--only-tools` / `--add-tools` / `--remove-tools` |
+| `reasoningEffort` | per model | `--reasoning-effort` |
+| `appendSystemPrompt` | — | `--append-system-prompt` |
+| `spec` | off | `--use-spec` (+ `--spec-model`, `--spec-reasoning-effort`) |
+| `sessionId` | — | `--session-id` (continue a session) |
+| `settings` | — | extra runtime settings, merged for this run only |
+| `factoryHome` | user home | `FACTORY_HOME_OVERRIDE` (sessions, logs, personal droids) |
+| `timeout` | 10 min | hard kill of the subprocess |
+
+`droid exec` does not stop for approval: an operation above the autonomy level fails the tool call and the droid carries on. Pick the lowest level the colony needs; `'high'` allows `git push`.
+
+### Models: Factory-hosted or BYOK
+
+`byok` decides where the model runs:
+
+```typescript
+// Factory-hosted model (needs FACTORY_API_KEY)
+withDroid({ prompt, model: 'opus', byok: false });
+
+// Any endpoint you run: vLLM, LiteLLM, an Anthropic or OpenAI proxy
+withDroid({
+  prompt,
+  model: 'local',
+  byok: {
+    provider: 'generic-chat-completion-api', // 'anthropic' | 'openai' | 'bedrock-converse'
+    baseUrl: 'http://localhost:8001/v1',
+    apiKey: process.env.VLLM_KEY,            // omit for a keyless endpoint
+    headers: { 'X-Team': 'platform' },
+    maxOutputTokens: 8192,
+  },
+});
+
+// The Mandible model gateway (the default inside a zone)
+withDroid({ prompt, model: 'sonnet', byok: 'gateway' });
+```
+
+For BYOK the provider writes a droid `customModels` entry into a settings file passed with `--settings` (merged for this process only, so `~/.factory` is never touched), selects it as `custom:mandible-byok`, and removes the file when the run ends. The endpoint key goes to droid through an environment variable, not the file. No `FACTORY_API_KEY` is needed.
+
+**Inside a Mandible zone** the default is `byok: 'gateway'`: droid talks to the platform model gateway with the zone's metered key (`OPENAI_BASE_URL` / `OPENAI_API_KEY`), and the model name resolves to the zone's gateway model group exactly as `withLLM` does. Every droid call is metered, and the tenant's provider keys never enter the zone. Pass `byok: false` to use Factory-hosted models instead.
+
+**Egress.** BYOK runs are air-gapped by default (`FACTORY_AIRGAP_ENABLED=1`): droid makes no calls to `api.factory.ai` or `telemetry.factory.ai`, and the model endpoint is its only network destination. Set `airgap: false` to allow them. Self-update is always disabled for colony runs.
+
+### Droid result
+
+```typescript
+interface DroidResult {
+  text: string;            // Final answer, or the root error on failure
+  success: boolean;
+  stopReason: 'success' | 'error' | 'interrupted' | 'timeout' | 'spawn-failed';
+  exitCode: number;        // 0 success, 1 any failure
+  sessionId?: string;      // Continue with `sessionId`
+  model?: string;          // 'custom:mandible-byok' for BYOK runs
+  numTurns: number;
+  toolCalls: number;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+    factory_credits: number; // zero for BYOK
+  };
+  errors: string[];        // Every error event, in order
+  durationMs: number;
+  timedOut: boolean;
+  stdout: string;
+  stderr: string;
+  messages: DroidMessage[]; // Raw stream-json events (also streamed to onMessage)
+}
+```
 
 ---
 

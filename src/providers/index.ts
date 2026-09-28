@@ -80,6 +80,19 @@ export type {
   QwenStopReason,
 } from './qwen-code.js';
 
+// Factory droid wrapper (droid exec, Factory-hosted or BYOK models)
+export { withDroid, DROID_BYOK_MODEL_ID } from './droid.js';
+export type {
+  DroidConfig,
+  DroidResult,
+  DroidMessage,
+  DroidUsage,
+  DroidAutonomy,
+  DroidByokModel,
+  DroidByokProvider,
+  DroidStopReason,
+} from './droid.js';
+
 // OpenCode agent wrapper (provider-agnostic agentic coding)
 export { withOpenCode } from './opencode.js';
 export type { OpenCodeConfig, OpenCodeResult } from './opencode.js';

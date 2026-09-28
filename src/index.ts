@@ -135,6 +135,7 @@ export { withStructuredOutput } from './providers/structured-output.js';
 export { withLLM } from './providers/llm.js';
 export { withBash } from './providers/bash.js';
 export { withOpenCode } from './providers/opencode.js';
+export { withDroid } from './providers/droid.js';
 export { withOpenHands, OpenHandsError } from './providers/openhands.js';
 export { assembleContext, withContext, walkLineage } from './providers/context.js';
 export { generateStructured } from './providers/structured-output.js';
@@ -188,4 +189,5 @@ export type {
 } from './providers/types.js';
 
 export type { OpenCodeConfig, OpenCodeResult } from './providers/opencode.js';
+export type { DroidConfig, DroidResult, DroidByokModel, DroidAutonomy } from './providers/droid.js';
 export type { OpenHandsConfig, OpenHandsResult, OpenHandsEvent, OpenHandsErrorCode } from './providers/openhands.js';
