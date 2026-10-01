@@ -105,15 +105,17 @@ export function matchType(signalType: string, pattern: string): boolean {
 }
 
 /**
- * Apply concentration decay to a signal based on elapsed time.
- * Returns the new concentration value (does not mutate the signal).
+ * Apply concentration decay to a signal based on time since it was last
+ * decayed (or deposited). Returns the new concentration value (does not
+ * mutate the signal). Callers that write the result back must also set
+ * `meta.decayed_at = now`, or the next sweep subtracts the same time twice.
  */
 export function decayConcentration(
   signal: Signal,
   ratePerSecond: number,
   now: number = Date.now()
 ): number {
-  const elapsedMs = now - signal.meta.deposited_at;
+  const elapsedMs = now - (signal.meta.decayed_at ?? signal.meta.deposited_at);
   const elapsedSeconds = elapsedMs / 1000;
   const newConcentration = signal.meta.concentration - (ratePerSecond * elapsedSeconds);
   return Math.max(0, newConcentration);
