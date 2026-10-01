@@ -82,6 +82,9 @@ export type { RuntimeEventType, RuntimeEventData, RuntimeEventCallback } from '.
 // Validation
 export { SignalValidationError, validateSignalInput, validateUpdateInput } from './core/validation.js';
 
+// Config files — YAML / JSON settings for colony code
+export { readConfigFile, readConfigFileSync, ConfigFileError } from './core/config-file.js';
+
 // Environment adapters
 export { FilesystemEnvironment } from './environments/filesystem/index.js';
 export { DoltEnvironment } from './environments/dolt/index.js';

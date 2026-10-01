@@ -5,3 +5,4 @@ export { ColonyRuntime, createRuntime } from './runtime.js';
 export { EventBus } from './events.js';
 export type { RuntimeEventType, RuntimeEventData, RuntimeEventCallback } from './events.js';
 export { SignalValidationError, validateSignalInput } from './validation.js';
+export { readConfigFile, readConfigFileSync, ConfigFileError } from './config-file.js';

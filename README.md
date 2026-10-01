@@ -147,6 +147,25 @@ A ready-made demo is available:
 npm run demo:repo-maintenance
 ```
 
+### Settings from a config file
+
+Colony code can keep its settings in YAML or JSON and load them with `readConfigFile` — no parser to bring along, inside a cloud zone or out:
+
+```typescript
+import { colony, readConfigFile } from '@mandible-ai/mandible';
+
+// config.yaml:
+//   sense: task:ready
+//   concurrency: 2
+const config = await readConfigFile<{ sense: string; concurrency: number }>('./config.yaml');
+
+colony('worker')
+  .sense(config.sense, { unclaimed: true })
+  .concurrency(config.concurrency)
+```
+
+`.yaml` / `.yml` and `.json` are supported; parse errors name the file and line. See [Config Files](docs/how-to/config-files.md).
+
 ## Dashboard
 
 `mandible dev <config>` runs your colonies and opens a live dashboard in the browser.
@@ -547,6 +566,7 @@ src/
     signal.ts           Signal creation, matching, decay, priority sorting
     runtime.ts          Colony runtime — the stigmergy loop engine
     attestation.ts      Ed25519 signing & verification (@noble/ed25519)
+    config-file.ts      readConfigFile — YAML / JSON settings files for colony code
   dsl/
     builder.ts          Fluent colony definition DSL
     mandible.ts         mandible() — multi-colony orchestration + start
@@ -599,6 +619,7 @@ docs/
     signal-enrichment.md ctx.enrich() / ctx.release() and Environment.update()
     dolt-environment.md DoltHub setup, schema mapping, branching patterns
     local-inference-providers.md vLLM, tool loop, qwen-code, OpenCode for local models
+    config-files.md     readConfigFile — loading colony settings from config.yaml
 
 examples/
   code-pipeline/
