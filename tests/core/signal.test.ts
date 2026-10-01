@@ -338,6 +338,15 @@ describe('decayConcentration', () => {
     const result = decayConcentration(s, 1.0, 10_000);
     expect(result).toBe(0);
   });
+
+  it('measures elapsed time from the last sweep when decayed_at is set', () => {
+    const s = makeSignal({
+      meta: { deposited_at: 0, decayed_at: 40_000, concentration: 0.6 },
+    });
+    // 10 seconds since the last sweep at 0.01/sec → 0.6 - 0.1 = 0.5
+    const result = decayConcentration(s, 0.01, 50_000);
+    expect(result).toBeCloseTo(0.5, 5);
+  });
 });
 
 // ── isExpired ───────────────────────────────────────────────
