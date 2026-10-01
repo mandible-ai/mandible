@@ -22,9 +22,10 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { watch } from 'node:fs';
 import type {
-  Signal, SignalQuery, Subscription, DecayResult, SignalMeta,
+  Signal, SignalQuery, Subscription, DecayResult, DecayPolicy, SignalMeta,
   EnvironmentConfig, SerializableEnvironment,
 } from '../../core/types.js';
+import { DEFAULT_DECAY_POLICY } from '../../core/types.js';
 import { registerEnvironment } from '../../core/environment-registry.js';
 import {
   createSignal, matchesQuery, decayConcentration, isExpired, isClaimExpired
@@ -146,6 +147,7 @@ export class FilesystemEnvironment implements SerializableEnvironment {
     }
     if (changes.meta?.concentration !== undefined) {
       signal.meta.concentration = changes.meta.concentration;
+      signal.meta.decayed_at = Date.now();
     }
 
     await writeFile(filePath, JSON.stringify(signal, null, 2), 'utf-8');
@@ -299,8 +301,9 @@ export class FilesystemEnvironment implements SerializableEnvironment {
     return matched;
   }
 
-  async decay(): Promise<DecayResult> {
+  async decay(policy?: Partial<DecayPolicy>): Promise<DecayResult> {
     await this.ensureInit();
+    const { rate, floor, releaseExpiredClaims } = { ...DEFAULT_DECAY_POLICY, ...policy };
     const now = Date.now();
     const result: DecayResult = { decayed: 0, evaporated: 0, claimsReleased: 0 };
 
@@ -317,7 +320,7 @@ export class FilesystemEnvironment implements SerializableEnvironment {
       }
 
       // Check claim lease expiration
-      if (isClaimExpired(signal, now)) {
+      if (releaseExpiredClaims && isClaimExpired(signal, now)) {
         await this.release(signal.id);
         signal.meta.claimed_by = undefined;
         signal.meta.claimed_at = undefined;
@@ -326,27 +329,32 @@ export class FilesystemEnvironment implements SerializableEnvironment {
         changed = true;
       }
 
-      // Apply concentration decay (default: 1% per second)
-      const decayRate = 0.01;
-      const newConc = decayConcentration(signal, decayRate, now);
+      // Concentration 0 is a dormant mark (e.g. a gated signal awaiting
+      // re-deposit), not one that drained — leave it for TTL or its owner.
+      if (signal.meta.concentration === 0) {
+        if (changed) await this.writeSignal(signal);
+        continue;
+      }
 
-      if (newConc < 0.05) {
+      const newConc = decayConcentration(signal, rate, now);
+
+      if (newConc < floor) {
         // Below floor — evaporate
         await this.withdraw(signal.id);
         result.evaporated++;
         continue;
       }
 
+      // Below the write threshold, decayed_at stays put so the elapsed
+      // time keeps accumulating toward the next sweep.
       if (Math.abs(newConc - signal.meta.concentration) > 0.001) {
         signal.meta.concentration = newConc;
+        signal.meta.decayed_at = now;
         changed = true;
         result.decayed++;
       }
 
-      if (changed) {
-        const filePath = join(this.signalsDir, `${signal.id}.json`);
-        await writeFile(filePath, JSON.stringify(signal, null, 2));
-      }
+      if (changed) await this.writeSignal(signal);
     }
 
     return result;
@@ -371,6 +379,11 @@ export class FilesystemEnvironment implements SerializableEnvironment {
 
   private async readAllSignals(): Promise<Signal[]> {
     return this.readDir(this.signalsDir);
+  }
+
+  private async writeSignal(signal: Signal): Promise<void> {
+    const filePath = join(this.signalsDir, `${signal.id}.json`);
+    await writeFile(filePath, JSON.stringify(signal, null, 2));
   }
 
   private async readDir(dir: string): Promise<Signal[]> {

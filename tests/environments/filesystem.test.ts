@@ -1,7 +1,7 @@
 // PURPOSE: Tests for the filesystem environment adapter
 // PURPOSE: Covers deposit, observe, withdraw, claim, release, watch, history, decay, snapshot
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { rm, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -506,6 +506,98 @@ describe('decay', () => {
     expect(result.decayed).toBe(0);
     expect(result.evaporated).toBe(0);
     expect(result.claimsReleased).toBe(0);
+  });
+});
+
+describe('decay — linear drain over a fake clock', () => {
+  const T0 = 1_700_000_000_000;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function concentrationOf(id: string): Promise<number | undefined> {
+    const all = await env.snapshot();
+    return all.find(s => s.id === id)?.meta.concentration;
+  }
+
+  it.each([1, 2, 10, 50])(
+    'a signal deposited at 1.0 reads ~0.5 after 50s at 1%%/s across %i sweeps',
+    async (sweeps) => {
+      const signal = await depositTask('draining');
+
+      for (let i = 1; i <= sweeps; i++) {
+        vi.setSystemTime(T0 + (50_000 * i) / sweeps);
+        await env.decay();
+      }
+
+      expect(await concentrationOf(signal.id)).toBeCloseTo(0.5, 3);
+    },
+  );
+
+  it('evaporates at the floor, not before', async () => {
+    const signal = await depositTask('evaporating');
+
+    // 1.0 - 0.01 * 94s = 0.06 → still above the 0.05 floor
+    for (let t = 5_000; t <= 90_000; t += 5_000) {
+      vi.setSystemTime(T0 + t);
+      await env.decay();
+    }
+    vi.setSystemTime(T0 + 94_000);
+    await env.decay();
+    expect(await concentrationOf(signal.id)).toBeCloseTo(0.06, 3);
+
+    vi.setSystemTime(T0 + 96_000);
+    const result = await env.decay();
+    expect(result.evaporated).toBe(1);
+    expect(await concentrationOf(signal.id)).toBeUndefined();
+  });
+
+  it('drains a reinforced signal from its reinforced value', async () => {
+    const signal = await depositTask('reinforced');
+
+    vi.setSystemTime(T0 + 30_000);
+    await env.decay();
+    vi.setSystemTime(T0 + 40_000);
+    await env.update(signal.id, { meta: { concentration: 1.0 } });
+
+    vi.setSystemTime(T0 + 50_000);
+    await env.decay();
+    expect(await concentrationOf(signal.id)).toBeCloseTo(0.9, 3);
+  });
+
+  it('honours the decay policy passed by the runtime', async () => {
+    const signal = await depositTask('fast');
+
+    for (let i = 1; i <= 5; i++) {
+      vi.setSystemTime(T0 + i * 5_000);
+      await env.decay({ rate: 0.02, floor: 0.4 });
+    }
+    expect(await concentrationOf(signal.id)).toBeCloseTo(0.5, 3);
+
+    vi.setSystemTime(T0 + 30_000);
+    await env.decay({ rate: 0.02, floor: 0.45 });
+    expect(await concentrationOf(signal.id)).toBeUndefined();
+  });
+
+  it('leaves gated signals at concentration 0 until they are re-deposited', async () => {
+    const gated = await env.deposit({
+      type: 'task:ready',
+      payload: { name: 'gated' },
+      meta: { deposited_by: 'test', concentration: 0, tags: ['gated'] },
+    });
+
+    for (let t = 5_000; t <= 50_000; t += 5_000) {
+      vi.setSystemTime(T0 + t);
+      await env.decay();
+    }
+
+    expect(await concentrationOf(gated.id)).toBe(0);
   });
 });
 

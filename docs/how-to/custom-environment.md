@@ -17,7 +17,7 @@ interface Environment {
   release(signalId: string): Promise<void>;
   watch(query: SignalQuery, callback: (signal: Signal) => void): Subscription;
   history(query: SignalQuery & { includeWithdrawn?: boolean }): Promise<Signal[]>;
-  decay(): Promise<DecayResult>;
+  decay(policy?: Partial<DecayPolicy>): Promise<DecayResult>;
   snapshot(): Promise<Signal[]>;
 }
 ```
@@ -59,7 +59,7 @@ history()  →  signal queryable with includeWithdrawn: true
 ```
 
 Between `deposit` and `withdraw`, `decay()` runs periodically:
-- Reduces `concentration` based on age and TTL
+- Reduces `concentration` by `rate` × the time since the signal was last decayed (default: 1% per second)
 - Evaporates signals that fall below the floor (default: 0.05)
 - Releases expired claims (where `claimed_at + claim_lease < now`)
 
@@ -74,8 +74,9 @@ import type {
   Environment,
   Subscription,
   DecayResult,
+  DecayPolicy,
 } from '@mandible-ai/mandible';
-import { matchesQuery } from '@mandible-ai/mandible';
+import { matchesQuery, decayConcentration, DEFAULT_DECAY_POLICY } from '@mandible-ai/mandible';
 
 export class InMemoryEnvironment implements Environment {
   readonly name: string;
@@ -203,7 +204,8 @@ export class InMemoryEnvironment implements Environment {
     return results;
   }
 
-  async decay(): Promise<DecayResult> {
+  async decay(policy?: Partial<DecayPolicy>): Promise<DecayResult> {
+    const { rate, floor } = { ...DEFAULT_DECAY_POLICY, ...policy };
     let decayed = 0;
     let evaporated = 0;
     let claimsReleased = 0;
@@ -220,17 +222,22 @@ export class InMemoryEnvironment implements Environment {
         continue;
       }
 
-      // Concentration decay (1% per second)
-      const decayAmount = (age / 1000) * 0.01;
-      const newConcentration = Math.max(0, 1.0 - decayAmount);
+      // Concentration decay since the last sweep. Concentration 0 is a
+      // dormant (gated) signal, so it is left alone.
+      if (signal.meta.concentration > 0) {
+        const newConcentration = decayConcentration(signal, rate, now);
 
-      if (newConcentration < 0.05) {
-        this.signals.delete(id);
-        this.withdrawn.set(id, signal);
-        evaporated++;
-      } else if (newConcentration !== signal.meta.concentration) {
-        signal.meta.concentration = newConcentration;
-        decayed++;
+        if (newConcentration < floor) {
+          this.signals.delete(id);
+          this.withdrawn.set(id, signal);
+          evaporated++;
+          continue;
+        }
+        if (newConcentration !== signal.meta.concentration) {
+          signal.meta.concentration = newConcentration;
+          signal.meta.decayed_at = now;
+          decayed++;
+        }
       }
 
       // Release expired claims
@@ -283,8 +290,8 @@ The `history` method should return both active and withdrawn signals when `inclu
 
 ### decay semantics
 
-The `decay()` method is called periodically by the runtime. It should:
-1. Reduce `concentration` for aging signals
+The `decay()` method is called periodically by the runtime with the colony's `DecayPolicy`. It should:
+1. Reduce `concentration` for aging signals by `policy.rate` × the time since `meta.decayed_at` (or `deposited_at`), then set `meta.decayed_at = now`. Measuring from `deposited_at` against the already-decayed value subtracts the same time on every sweep.
 2. Evaporate (move to history) signals below the floor threshold
 3. Release claims that have exceeded their lease duration
 4. Return counts of what changed

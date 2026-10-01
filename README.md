@@ -436,7 +436,7 @@ interface Environment {
   release(signalId: string): Promise<void>;
   watch(query: SignalQuery, callback: (signal: Signal) => void): Subscription;
   history(query: SignalQuery): Promise<Signal[]>;
-  decay(): Promise<DecayResult>;
+  decay(policy?: Partial<DecayPolicy>): Promise<DecayResult>;
   snapshot(): Promise<Signal[]>;
 }
 ```

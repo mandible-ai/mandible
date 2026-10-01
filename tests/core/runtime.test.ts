@@ -664,6 +664,22 @@ describe('runtime — decay control', () => {
     expect(decayEvents.length).toBeGreaterThan(0);
   });
 
+  it('passes its decay policy to the environment sweep', async () => {
+    const decaySpy = vi.spyOn(env, 'decay');
+    const def = buildColony(async () => {});
+    const rt = createRuntime(def, {
+      decayPolicy: { interval: 100, rate: 0.02, floor: 0.1 },
+    });
+
+    await rt.start();
+    await sleep(300);
+    await rt.stop();
+
+    expect(decaySpy).toHaveBeenCalledWith(
+      expect.objectContaining({ rate: 0.02, floor: 0.1, interval: 100 }),
+    );
+  });
+
   it('decay skipped when config.decay === false', async () => {
     const events: RuntimeEventData[] = [];
     const def = colony('no-decay')

@@ -45,6 +45,14 @@ export interface SignalMeta {
    */
   concentration: number;
 
+  /**
+   * When `concentration` was last drained by a decay sweep or set by an
+   * update (epoch ms). Decay subtracts only the time since this mark, so
+   * sweeps compose linearly. Absent until first touched; falls back to
+   * `deposited_at`.
+   */
+  decayed_at?: number;
+
   /** Optional time-to-live in milliseconds. Signal evaporates after this. */
   ttl?: number;
 
@@ -188,7 +196,7 @@ export interface Environment {
   history(query: SignalQuery & { includeWithdrawn?: boolean }): Promise<Signal[]>;
 
   /** Apply decay to all signals based on their age and TTL */
-  decay(): Promise<DecayResult>;
+  decay(policy?: Partial<DecayPolicy>): Promise<DecayResult>;
 
   /** Get all active signals (primarily for debugging/observability) */
   snapshot(): Promise<Signal[]>;

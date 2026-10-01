@@ -710,7 +710,7 @@ export class ColonyRuntime implements IColonyRuntime {
 
   private async runDecay(): Promise<void> {
     try {
-      const result = await this.definition.environment.decay();
+      const result = await this.definition.environment.decay(this.decayPolicy);
       this.emitEvent({
         type: 'decay:sweep',
         colony: this.definition.name,
