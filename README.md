@@ -285,6 +285,7 @@ The builder supports the full range of colony configuration:
   .autoWithdraw()                                 // auto-remove processed signals
   .timeout(60_000)                                // action timeout
   .retry(3, 1000)                                 // retry with backoff
+  .secrets(['ODDS_API_KEY'])                      // secret names the host must supply
 ```
 
 **Claim strategies:**
