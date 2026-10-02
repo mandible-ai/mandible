@@ -6,6 +6,8 @@ import { GitHubEnvironment } from '../../src/environments/github/adapter.js';
 import { DoltEnvironment } from '../../src/environments/dolt/adapter.js';
 import type { ColonyDefinition, Environment } from '../../src/core/types.js';
 import type { ColonyModuleRef } from '../../src/cloud/types.js';
+import { colony } from '../../src/dsl/builder.js';
+import { FilesystemEnvironment } from '../../src/environments/filesystem/index.js';
 
 describe('secret declarations', () => {
   it('GitHubEnvironment declares GITHUB_TOKEN by default', () => {
@@ -49,5 +51,33 @@ describe('secret declarations', () => {
   it('environments without secret needs require no change', () => {
     const bare: Partial<Environment> = { name: 'x' };
     expect(bare.requiredSecrets).toBeUndefined();
+  });
+});
+
+// A closure colony declares secrets the same way a module ref does: by name,
+// on the thing that describes the colony.
+describe('ColonyBuilder.secrets', () => {
+  const env = new FilesystemEnvironment({ root: '/tmp/mandible-secret-declarations', name: 'test' });
+  const worker = () => colony('worker').in(env).sense('task:new').do('work', async () => {});
+
+  it('carries declared names onto the definition', () => {
+    expect(worker().secrets(['B']).build().secrets).toEqual(['B']);
+  });
+
+  it('accumulates across calls, without duplicates', () => {
+    const def = worker().secrets(['A', 'B']).secrets(['B', 'C']).build();
+    expect(def.secrets).toEqual(['A', 'B', 'C']);
+  });
+
+  it('leaves the definition without secrets when none are declared', () => {
+    expect(worker().build().secrets).toBeUndefined();
+    expect(worker().secrets([]).build().secrets).toBeUndefined();
+  });
+
+  it('does not hand the definition the caller\'s array', () => {
+    const declared = ['A'];
+    const def = worker().secrets(declared).build();
+    def.secrets!.push('MUTATED');
+    expect(declared).toEqual(['A']);
   });
 });

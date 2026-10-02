@@ -45,6 +45,7 @@ export class ColonyBuilder<T = Record<string, unknown>> {
   private _claimLease?: number;
   private _config: ColonyConfig = {};
   private _resources?: HostResources;
+  private _secrets: string[] = [];
   private _pendingGuard?: (signal: Signal<T>) => boolean | Promise<boolean>;
 
   constructor(name: string) {
@@ -107,6 +108,18 @@ export class ColonyBuilder<T = Record<string, unknown>> {
   /** Set per-colony resource allocation (overrides host default) */
   resources(res: HostResources): this {
     this._resources = res;
+    return this;
+  }
+
+  /**
+   * Declare the tenant secrets this colony's work needs, by name. Names only:
+   * the host supplies the values, and they appear in process.env at runtime.
+   *
+   * Calls add to the declaration rather than replace it, so a colony can state
+   * each need next to the code that has it.
+   */
+  secrets(names: string[]): this {
+    this._secrets = [...new Set([...this._secrets, ...names])];
     return this;
   }
 
@@ -201,6 +214,7 @@ export class ColonyBuilder<T = Record<string, unknown>> {
       claimLease: this._claimLease,
       config: this._config,
       resources: this._resources,
+      secrets: this._secrets.length > 0 ? [...this._secrets] : undefined,
     };
   }
 }
