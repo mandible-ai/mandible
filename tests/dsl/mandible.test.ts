@@ -373,4 +373,68 @@ describe('mandible DSL', () => {
       expect(entries[1].moduleRef).toEqual(moduleRef);
     });
   });
+
+  // A declared secret is only useful if it reaches the definition: a host reads
+  // `def.secrets` to decide what to supply. A name that stops at the module ref
+  // deploys a colony that fails the first time it reaches for the value.
+  describe('declared secrets', () => {
+    const fixture = resolve(__dirname, 'fixtures/test-configurator.ts');
+
+    async function freshEnv(name: string) {
+      const root = freshRoot();
+      await mkdir(root, { recursive: true });
+      return new FilesystemEnvironment({ root, name });
+    }
+
+    it('carries a module ref\'s secrets onto its definition', async () => {
+      const defs = await mandible('modref-secrets')
+        .environment(await freshEnv('modref-secrets'))
+        .colony('book-lines', {
+          module: fixture,
+          export: 'configureTestColony',
+          args: ['hello'],
+          secrets: ['A'],
+        })
+        .build();
+
+      expect(defs[0].secrets).toEqual(['A']);
+    });
+
+    it('unions the module\'s own declaration with the ref\'s, without duplicates', async () => {
+      const defs = await mandible('union-secrets')
+        .environment(await freshEnv('union-secrets'))
+        .colony('both', {
+          module: fixture,
+          export: 'configureSecretColony',
+          args: [['A', 'B']],
+          secrets: ['B', 'C'],
+        })
+        .build();
+
+      expect(defs[0].secrets).toEqual(['A', 'B', 'C']);
+    });
+
+    it('leaves secrets undeclared when neither the ref nor the builder names any', async () => {
+      const defs = await mandible('no-secrets')
+        .environment(await freshEnv('no-secrets'))
+        .colony('modref', { module: fixture, export: 'configureTestColony', args: ['hello'] })
+        .colony('closure', c => c.sense('task:new').do('work', async () => {}))
+        .build();
+
+      expect(defs[0].secrets).toBeUndefined();
+      expect(defs[1].secrets).toBeUndefined();
+    });
+
+    it('does not hand the definition the module ref\'s own array', async () => {
+      const declared = ['A'];
+      const app = mandible('no-alias')
+        .environment(await freshEnv('no-alias'))
+        .colony('book-lines', { module: fixture, export: 'configureTestColony', args: ['hello'], secrets: declared });
+
+      const defs = await app.build();
+      defs[0].secrets!.push('MUTATED');
+
+      expect(declared).toEqual(['A']);
+    });
+  });
 });

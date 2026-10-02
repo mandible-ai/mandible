@@ -14,3 +14,12 @@ export function configureTestColony(greeting: string) {
       })
       .concurrency(2);
 }
+
+/** A colony module that declares secrets itself, through the builder. */
+export function configureSecretColony(secrets: string[]) {
+  return (builder: ColonyBuilder) =>
+    builder
+      .sense('test:signal', { unclaimed: true })
+      .do('test-action', async () => {})
+      .secrets(secrets);
+}

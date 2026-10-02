@@ -178,7 +178,15 @@ export class MandibleBuilder {
         if (!builder.hasEnvironment()) {
           builder.in(env);
         }
-        results.push(builder.build());
+        const definition = builder.build();
+        // A host reads declared secrets from the definition, not from the ref.
+        // Without this the names on the ref never left it, and the colony
+        // deployed with nothing to fetch.
+        const secrets = unionOf(definition.secrets, entry.moduleRef.secrets);
+        if (secrets.length > 0) {
+          definition.secrets = secrets;
+        }
+        results.push(definition);
       }
     }
     return results;
@@ -199,6 +207,11 @@ export class MandibleBuilder {
     }
     return this._env;
   }
+}
+
+/** The names in either list, each once, in first-seen order. */
+function unionOf(...lists: Array<string[] | undefined>): string[] {
+  return [...new Set(lists.flatMap(list => list ?? []))];
 }
 
 /**
