@@ -336,6 +336,19 @@ export interface BashProviderConfig<T = Record<string, unknown>> {
  * A custom LLM call function for providers not covered by built-in SDKs.
  * Takes a prompt and returns a structured result.
  */
+/**
+ * Token usage a provider reported for one call, normalised across SDKs.
+ * Absent when the client did not report it (custom provider functions).
+ */
+export interface ProviderUsage {
+  inputTokens: number;
+  outputTokens: number;
+  /** Prompt tokens served from the provider's cache, where the SDK reports it. */
+  cacheReadTokens?: number;
+  /** Prompt tokens written to the provider's cache, where the SDK reports it. */
+  cacheWriteTokens?: number;
+}
+
 export type LLMCallFunction<R = Record<string, unknown>> = (
   prompt: string,
   options: { systemPrompt?: string; maxTokens?: number; temperature?: number }

@@ -34,6 +34,7 @@ import type { Signal, ActionContext } from '../core/types.js';
 import { resolveGatewayGroup } from './llm.js';
 import { resolveModel } from './models.js';
 import type {
+  ProviderUsage,
   StructuredOutputConfig,
   ActionHandler,
   SignalDeposit,
@@ -102,15 +103,54 @@ export type StructuredCallOptions<T, R> = Pick<
   'model' | 'provider' | 'prompt' | 'systemPrompt' | 'schema' | 'maxTokens' | 'temperature' | 'bedrockConfig'
 >;
 
+/** One provider call's answer and, where the client reported it, what it cost in tokens. */
+interface Called<R> {
+  value: R;
+  usage?: ProviderUsage;
+}
+
+/** Anthropic-shaped usage (the Anthropic and Bedrock SDKs), normalised. */
+function anthropicUsage(u: any): ProviderUsage | undefined {
+  if (!u || typeof u.input_tokens !== 'number') return undefined;
+  return {
+    inputTokens: u.input_tokens,
+    outputTokens: typeof u.output_tokens === 'number' ? u.output_tokens : 0,
+    ...(typeof u.cache_read_input_tokens === 'number' ? { cacheReadTokens: u.cache_read_input_tokens } : {}),
+    ...(typeof u.cache_creation_input_tokens === 'number' ? { cacheWriteTokens: u.cache_creation_input_tokens } : {}),
+  };
+}
+
+/** OpenAI-shaped usage (the OpenAI SDK, and every OpenAI-compatible gateway), normalised. */
+function openAIUsage(u: any): ProviderUsage | undefined {
+  if (!u || typeof u.prompt_tokens !== 'number') return undefined;
+  const cached = u.prompt_tokens_details?.cached_tokens;
+  return {
+    inputTokens: u.prompt_tokens,
+    outputTokens: typeof u.completion_tokens === 'number' ? u.completion_tokens : 0,
+    ...(typeof cached === 'number' ? { cacheReadTokens: cached } : {}),
+  };
+}
+
+/** Vercel AI SDK usage: v4 names it promptTokens/completionTokens, v5 inputTokens/outputTokens. */
+function vercelUsage(u: any): ProviderUsage | undefined {
+  if (!u) return undefined;
+  const input = typeof u.inputTokens === 'number' ? u.inputTokens : u.promptTokens;
+  const output = typeof u.outputTokens === 'number' ? u.outputTokens : u.completionTokens;
+  if (typeof input !== 'number') return undefined;
+  return { inputTokens: input, outputTokens: typeof output === 'number' ? output : 0 };
+}
+
 /**
  * Resolve model + prompt, call the LLM, validate against the schema.
- * Returns the parsed result and the concrete model ID that ran.
+ * Returns the parsed result, the concrete model ID that ran and, where the
+ * client reported it, the token usage — so a caller can account for spend
+ * without estimating. Custom provider functions report no usage.
  */
 export async function generateStructured<T, R>(
   opts: StructuredCallOptions<T, R>,
   signal: Signal<T>,
   ctx: ActionContext,
-): Promise<{ result: R; model: string }> {
+): Promise<{ result: R; model: string; usage?: ProviderUsage }> {
   const {
     model: modelConfig,
     provider = 'anthropic',
@@ -139,12 +179,15 @@ export async function generateStructured<T, R>(
 
   // 4. Call the LLM
   let result: R;
+  let usage: ProviderUsage | undefined;
   if (typeof provider === 'function') {
     result = await (provider as LLMCallFunction<R>)(fullPrompt, { systemPrompt, maxTokens, temperature });
   } else {
-    result = await callProvider(provider, model, fullPrompt, {
+    const called = await callProvider<R>(provider, model, fullPrompt, {
       systemPrompt, maxTokens, temperature, schema, bedrockConfig,
     });
+    result = called.value;
+    usage = called.usage;
   }
 
   // 5. Validate against schema if provided
@@ -157,7 +200,7 @@ export async function generateStructured<T, R>(
     }
   }
 
-  return { result, model };
+  return usage ? { result, model, usage } : { result, model };
 }
 
 /** Guard: a dynamic model function combined with a static Bedrock override would silently lose. */
@@ -189,7 +232,7 @@ async function callProvider<R>(
     schema?: any;
     bedrockConfig?: BedrockConfig;
   }
-): Promise<R> {
+): Promise<Called<R>> {
   switch (provider) {
     case 'anthropic':
       return callAnthropic(model, prompt, options);
@@ -217,7 +260,7 @@ async function callAnthropic<R>(
   model: string,
   prompt: string,
   options: { systemPrompt?: string; maxTokens?: number; temperature?: number }
-): Promise<R> {
+): Promise<Called<R>> {
   try {
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
     const client = new Anthropic();
@@ -236,7 +279,7 @@ async function callAnthropic<R>(
       .map((block: any) => block.text)
       .join('');
 
-    return parseJsonResponse<R>(text);
+    return { value: parseJsonResponse<R>(text), usage: anthropicUsage(response.usage) };
   } catch (err: any) {
     if (err.code === 'MODULE_NOT_FOUND' || err.code === 'ERR_MODULE_NOT_FOUND') {
       throw new Error(
@@ -252,7 +295,7 @@ async function callBedrock<R>(
   model: string,
   prompt: string,
   options: { systemPrompt?: string; maxTokens?: number; temperature?: number; bedrockConfig?: BedrockConfig }
-): Promise<R> {
+): Promise<Called<R>> {
   if (!options.bedrockConfig) {
     throw new Error(
       "Bedrock provider requires bedrockConfig. Pass { provider: 'bedrock', bedrockConfig: { region: '...' } }."
@@ -288,7 +331,7 @@ async function callBedrock<R>(
       .map((block: any) => block.text)
       .join('');
 
-    return parseJsonResponse<R>(text);
+    return { value: parseJsonResponse<R>(text), usage: anthropicUsage(response.usage) };
   } catch (err: any) {
     if (err.code === 'MODULE_NOT_FOUND' || err.code === 'ERR_MODULE_NOT_FOUND') {
       throw new Error(
@@ -304,7 +347,7 @@ async function callOpenAI<R>(
   model: string,
   prompt: string,
   options: { systemPrompt?: string; maxTokens?: number; temperature?: number; schema?: any }
-): Promise<R> {
+): Promise<Called<R>> {
   try {
     const { default: OpenAI } = await import('openai');
     const client = new OpenAI();
@@ -325,7 +368,7 @@ async function callOpenAI<R>(
     });
 
     const text = response.choices[0]?.message?.content ?? '{}';
-    return parseJsonResponse<R>(text);
+    return { value: parseJsonResponse<R>(text), usage: openAIUsage(response.usage) };
   } catch (err: any) {
     if (err.code === 'MODULE_NOT_FOUND' || err.code === 'ERR_MODULE_NOT_FOUND') {
       throw new Error(
@@ -341,7 +384,7 @@ async function callVercelAI<R>(
   model: string,
   prompt: string,
   options: { systemPrompt?: string; maxTokens?: number; temperature?: number; schema?: any }
-): Promise<R> {
+): Promise<Called<R>> {
   try {
     const { generateObject, generateText } = await import('ai');
 
@@ -352,7 +395,7 @@ async function callVercelAI<R>(
       // For now, try to auto-detect based on model name.
       const modelInstance = await resolveVercelModel(model);
 
-      const { object } = await generateObject({
+      const { object, usage } = await generateObject({
         model: modelInstance,
         schema: options.schema,
         prompt,
@@ -361,12 +404,12 @@ async function callVercelAI<R>(
         ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       });
 
-      return object as R;
+      return { value: object as R, usage: vercelUsage(usage) };
     }
 
     // Fallback to text generation + JSON parse
     const modelInstance = await resolveVercelModel(model);
-    const { text } = await generateText({
+    const { text, usage } = await generateText({
       model: modelInstance,
       prompt,
       ...(options.systemPrompt ? { system: options.systemPrompt } : {}),
@@ -374,7 +417,7 @@ async function callVercelAI<R>(
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     });
 
-    return parseJsonResponse<R>(text);
+    return { value: parseJsonResponse<R>(text), usage: vercelUsage(usage) };
   } catch (err: any) {
     if (err.code === 'MODULE_NOT_FOUND' || err.code === 'ERR_MODULE_NOT_FOUND') {
       throw new Error(
