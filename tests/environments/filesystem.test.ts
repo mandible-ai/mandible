@@ -111,10 +111,15 @@ describe('deposit', () => {
     ).rejects.toThrow('plain object');
   });
 
-  it('rejects concentration outside 0-1 range', async () => {
+  it('rejects a negative concentration', async () => {
     await expect(
-      env.deposit({ type: 'x', payload: {}, meta: { deposited_by: 'test', concentration: 1.5 } })
+      env.deposit({ type: 'x', payload: {}, meta: { deposited_by: 'test', concentration: -0.5 } })
     ).rejects.toThrow('concentration');
+  });
+
+  it('accepts a concentration above 1', async () => {
+    const signal = await env.deposit({ type: 'x', payload: {}, meta: { deposited_by: 'test', concentration: 1.5 } });
+    expect(signal.meta.concentration).toBe(1.5);
   });
 
   it('rejects negative ttl', async () => {
@@ -624,5 +629,70 @@ describe('snapshot', () => {
   it('returns empty array for fresh environment', async () => {
     const snap = await env.snapshot();
     expect(snap).toEqual([]);
+  });
+});
+
+describe('decay — persistent signals', () => {
+  const T0 = 1_700_000_000_000;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function find(id: string): Promise<Signal | undefined> {
+    return (await env.snapshot()).find(s => s.id === id);
+  }
+
+  it('never drains or evaporates a persistent signal', async () => {
+    const lasting = await env.deposit({
+      type: 'layer:v3',
+      payload: {},
+      meta: { deposited_by: 'test', persistent: true },
+    });
+    const fleeting = await depositTask('fleeting');
+
+    for (let t = 5_000; t <= 600_000; t += 5_000) {
+      vi.setSystemTime(T0 + t);
+      await env.decay();
+    }
+
+    expect(await find(fleeting.id)).toBeUndefined();
+    expect((await find(lasting.id))?.meta.concentration).toBe(1);
+  });
+
+  it('still expires a persistent signal by its TTL', async () => {
+    const lasting = await env.deposit({
+      type: 'run:mark',
+      payload: {},
+      meta: { deposited_by: 'test', persistent: true, ttl: 60_000 },
+    });
+
+    vi.setSystemTime(T0 + 59_000);
+    await env.decay();
+    expect(await find(lasting.id)).toBeDefined();
+
+    vi.setSystemTime(T0 + 61_000);
+    const result = await env.decay();
+    expect(result.evaporated).toBe(1);
+    expect(await find(lasting.id)).toBeUndefined();
+  });
+
+  it('still releases an expired claim on a persistent signal', async () => {
+    const lasting = await env.deposit({
+      type: 'clock:seed',
+      payload: {},
+      meta: { deposited_by: 'test', persistent: true },
+    });
+    expect(await env.claim(lasting.id, 'worker-1', 10_000)).toBe(true);
+
+    vi.setSystemTime(T0 + 11_000);
+    const result = await env.decay();
+    expect(result.claimsReleased).toBe(1);
+    expect((await find(lasting.id))?.meta.claimed_by).toBeUndefined();
   });
 });

@@ -2,7 +2,7 @@
 // PURPOSE: Covers lifecycle, sensing, rule matching, claims, concurrency, retry, decay, events
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { rm } from 'node:fs/promises';
+import { rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ColonyRuntime, createRuntime } from '../../src/core/runtime.js';
@@ -453,6 +453,26 @@ describe('runtime — action context', () => {
     expect(shaped[0].meta.caused_by).toEqual([trigger.id]);
     expect(shaped[0].meta.tags).toEqual(['output']);
     expect(rt.stats.signalsDeposited).toBe(1);
+  });
+
+  it('ctx.deposit forwards the persistent option to the environment', async () => {
+    const def = buildColony(async (_signal, ctx) => {
+      await ctx.deposit('layer:v3', { entries: 1 }, { persistent: true });
+    });
+
+    await depositTask('persistent-test');
+    const rt = createRuntime(def);
+    await rt.start();
+    await sleep(300);
+    await rt.stop();
+
+    const layers = await env.observe({ type: 'layer:v3' });
+    expect(layers).toHaveLength(1);
+    expect(layers[0].meta.persistent).toBe(true);
+
+    // The README documents this exact call shape; keep the two in step.
+    const readme = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
+    expect(readme).toContain('{ persistent: true });');
   });
 
   it('ctx.withdraw removes a signal', async () => {

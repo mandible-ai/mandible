@@ -29,10 +29,16 @@ export function validateSignalInput(
       }
     }
 
+    // No upper bound: a substrate may be deposited into at any strength, and
+    // the hosted signal server accepts the same.
     if (input.meta.concentration !== undefined) {
-      if (typeof input.meta.concentration !== 'number' || input.meta.concentration < 0 || input.meta.concentration > 1) {
-        throw new SignalValidationError('Signal meta.concentration must be a number between 0 and 1');
+      if (typeof input.meta.concentration !== 'number' || !Number.isFinite(input.meta.concentration) || input.meta.concentration < 0) {
+        throw new SignalValidationError('Signal meta.concentration must be a finite number of at least 0');
       }
+    }
+
+    if (input.meta.persistent !== undefined && typeof input.meta.persistent !== 'boolean') {
+      throw new SignalValidationError('Signal meta.persistent must be a boolean');
     }
 
     if (input.meta.ttl !== undefined) {
@@ -60,8 +66,8 @@ export function validateUpdateInput(
 
   if (changes.meta) {
     if (changes.meta.concentration !== undefined) {
-      if (typeof changes.meta.concentration !== 'number' || changes.meta.concentration < 0 || changes.meta.concentration > 1) {
-        throw new SignalValidationError('Update meta.concentration must be a number between 0 and 1');
+      if (typeof changes.meta.concentration !== 'number' || !Number.isFinite(changes.meta.concentration) || changes.meta.concentration < 0) {
+        throw new SignalValidationError('Update meta.concentration must be a finite number of at least 0');
       }
     }
 

@@ -92,6 +92,7 @@ export class FilesystemEnvironment implements SerializableEnvironment {
       tags: input.meta?.tags,
       caused_by: input.meta?.caused_by,
       concentration: input.meta?.concentration,
+      persistent: input.meta?.persistent,
     });
 
     const filePath = join(this.signalsDir, `${signal.id}.json`);
