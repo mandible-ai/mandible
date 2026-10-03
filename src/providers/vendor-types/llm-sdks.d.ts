@@ -9,7 +9,15 @@ declare module '@anthropic-ai/sdk' {
         temperature?: number;
         system?: string;
         messages: Array<{ role: string; content: string }>;
-      }): Promise<{ content: Array<{ type: string; text?: string }> }>;
+      }): Promise<{
+        content: Array<{ type: string; text?: string }>;
+        usage?: {
+          input_tokens: number;
+          output_tokens: number;
+          cache_read_input_tokens?: number | null;
+          cache_creation_input_tokens?: number | null;
+        };
+      }>;
     };
   }
 }
@@ -24,7 +32,14 @@ declare module 'openai' {
           max_tokens?: number;
           temperature?: number;
           response_format?: { type: string };
-        }): Promise<{ choices: Array<{ message: { content: string } }> }>;
+        }): Promise<{
+          choices: Array<{ message: { content: string } }>;
+          usage?: {
+            prompt_tokens: number;
+            completion_tokens: number;
+            prompt_tokens_details?: { cached_tokens?: number };
+          };
+        }>;
       };
     };
   }
@@ -38,7 +53,7 @@ declare module 'ai' {
     system?: string;
     maxTokens?: number;
     temperature?: number;
-  }): Promise<{ object: any }>;
+  }): Promise<{ object: any; usage?: any }>;
 
   export function generateText(options: {
     model: any;
@@ -46,7 +61,7 @@ declare module 'ai' {
     system?: string;
     maxTokens?: number;
     temperature?: number;
-  }): Promise<{ text: string }>;
+  }): Promise<{ text: string; usage?: any }>;
 }
 
 declare module '@ai-sdk/anthropic' {
