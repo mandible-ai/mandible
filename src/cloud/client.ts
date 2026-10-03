@@ -19,6 +19,7 @@ import type {
   ApiError,
 } from './types.js';
 
+/** @deprecated Import from `@mandible-ai/cloud`, which owns the Mandible Cloud client. */
 export class MandibleCloudError extends Error {
   constructor(public code: string, message: string, public status: number) {
     super(message);
@@ -26,6 +27,11 @@ export class MandibleCloudError extends Error {
   }
 }
 
+/**
+ * @deprecated Import `MandibleCloudClient` from `@mandible-ai/cloud`. The
+ * client and its API types are maintained there, beside the server they
+ * describe; this copy is kept for existing imports and is no longer updated.
+ */
 export class MandibleCloudClient {
   private apiUrl: string;
   private apiKey: string;
