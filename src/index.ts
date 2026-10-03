@@ -183,6 +183,7 @@ export type {
   AgentResult,
   BedrockConfig,
   StructuredOutputConfig,
+  ProviderUsage,
   LLMConfig,
   BashProviderConfig,
   LLMCallFunction,

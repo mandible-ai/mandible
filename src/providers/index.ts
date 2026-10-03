@@ -114,6 +114,7 @@ export type {
   ClaudeCodeConfig,
   AgentResult,
   StructuredOutputConfig,
+  ProviderUsage,
   BashProviderConfig,
   LLMConfig,
   LLMCallFunction,
