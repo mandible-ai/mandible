@@ -58,6 +58,7 @@ export {
 // Colony DSL
 export { colony, ColonyBuilder } from './dsl/builder.js';
 export { mandible } from './dsl/mandible.js';
+export type { ColonyModuleRef } from './cloud/types.js';
 
 // Host lifecycle
 export { isHost } from './core/types.js';

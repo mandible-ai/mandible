@@ -1,5 +1,6 @@
 export { MandibleCloudClient, MandibleCloudError } from './client.js';
-// CloudHost lives in @mandible-ai/cloud (mandible-cloud repo)
+// Deprecated: the client and API types live in @mandible-ai/cloud (mandible-cloud repo),
+// as does CloudHost. Only ColonyModuleRef belongs to the framework; import it from the package root.
 export type {
   Account,
   CloudConfig,
