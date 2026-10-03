@@ -568,6 +568,7 @@ export class ColonyRuntime implements IColonyRuntime {
             ttl: options.ttl,
             tags: options.tags,
             caused_by: options.causedBy ?? [triggeringSignal.id],
+            persistent: options.persistent,
           },
         });
         runtime._stats.signalsDeposited++;
