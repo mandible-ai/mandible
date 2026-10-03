@@ -74,9 +74,16 @@ export class MandibleCloudClient {
   }
 
   async stop(projectId?: string): Promise<void> {
-    const colonies = await this.listColonies(projectId);
-    for (const colony of colonies) {
-      await this.destroyColony(colony.name, projectId);
+    // Colony names come from the zone list: ZoneStatus.colony is the field the
+    // server populates, and destroying a colony takes down its active zone.
+    const zones = await this.listZones(projectId);
+    const names = new Set(
+      zones
+        .filter(zone => zone.colony && zone.state !== 'destroyed' && zone.state !== 'destroying')
+        .map(zone => zone.colony),
+    );
+    for (const name of names) {
+      await this.destroyColony(name, projectId);
     }
   }
 
