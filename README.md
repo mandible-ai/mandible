@@ -203,6 +203,12 @@ Every concept maps to a biological analogy:
 | **Attestation** | Trail markers | Bridges sign transfers, creating a verifiable chain of custody across environments. |
 | **Sentinel** | Guard ant | Monitors an environment for signals that fail provenance verification. |
 
+Decay is opt-out per signal. A deposit with `persistent: true` keeps its concentration until its TTL expires or it is withdrawn; claim leases on it still expire. Use it for standing state such as a versioned layer, a run mark, or a clock seed, and leave it off for work items that should fade:
+
+```typescript
+await ctx.deposit('layer:v3', { entries }, { persistent: true });
+```
+
 ## The stigmergy loop
 
 Every colony runtime executes the same loop:
