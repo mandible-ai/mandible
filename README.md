@@ -4,11 +4,9 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/Node-%3E%3D20-brightgreen.svg)
 
-A universal stigmergy framework for autonomous agent coordination.
+The open-source SDK for [Mandible](https://mandible.dev), the platform for governed agent systems.
 
-Instead of wiring agents together with message passing, Mandible agents coordinate by depositing and sensing **signals** in a shared **environment**, the same way ant colonies self-organize through pheromone trails. No orchestrator. No message routing. Complex behavior emerges from simple rules.
-
-[mandible.dev](https://mandible.dev)
+Mandible builds agent systems, not agents. Bring the coding agents you already use (Claude Code, Factory Droids, OpenCode, OpenHands, Qwen Code, or models on your own GPUs) and compose them into **colonies**: roles that coordinate by depositing and sensing **signals** in a shared **environment**, the way ant colonies self-organize through pheromone trails, with a defined loop around them. No message routing; the environment carries the state. Start a colony locally with this SDK. Run it on the Mandible platform for governed execution: defined permissions, memory with provenance, and evidence of what happened.
 
 ## Why stigmergy over message passing?
 
@@ -22,7 +20,7 @@ Stigmergy sidesteps all of that. The environment carries the state. Agents are s
 - **Fault tolerance** - an agent dies, the signal remains, another agent picks it up. No lost messages.
 - **Zero coupling** - add or remove colony types without touching any existing colony's configuration.
 - **Natural load balancing** - spin up more instances of any colony type. They self-organize around available work.
-- **Provenance built in** - every signal is signed by the colony that produced it. Bridges attest transfers. Trust is verifiable.
+- **Provenance by design** - signals carry the identity of the colony that produced them, and the signing, verification and bridge-attestation primitives are in `core`. Automatic signing on deposit is not wired into the runtime yet ([#83](https://github.com/mandible-ai/mandible/issues/83)); the Mandible platform enforces identity and trust when a colony runs there.
 
 ## Quick start
 
