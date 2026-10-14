@@ -1,7 +1,7 @@
 {
   "name": "@mandible-ai/mandible",
   "version": "0.8.0",
-  "description": "Universal stigmergy framework for autonomous agent coordination — like ant colonies using pheromone trails",
+  "description": "The open-source SDK for Mandible, the platform for governed agent systems. Compose the coding agents you already use into colonies that coordinate through a shared environment.",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
