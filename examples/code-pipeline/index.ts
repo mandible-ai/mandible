@@ -30,9 +30,9 @@ const env = new FilesystemEnvironment({ root: ENV_ROOT, name: 'code-pipeline' })
 // Start colonies on the local host (default when .host() is omitted)
 const host = await mandible('code-pipeline')
   .environment(env)
-  .colony('shaper', shaper)
-  .colony('critic', critic)
-  .colony('keeper', keeper)
+  .colony('shaper', shaper())
+  .colony('critic', critic())
+  .colony('keeper', keeper())
   .start();
 
 console.log(`Started ${host.colonies.length} colonies on ${host.name} host`);

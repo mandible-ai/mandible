@@ -13,6 +13,11 @@ Four built-in providers:
 
 All providers share two patterns: **output mapping** (how to turn results into signals) and **autoWithdraw** (automatically remove the triggering signal after success).
 
+The standalone `colony(name)` function takes one argument and returns a builder.
+Attach an environment with `.in(env)` and call `.build()` before creating a
+runtime. The system builder's `.colony(name, c => ...)` is a different API;
+it supplies the shared environment when starting the system.
+
 ---
 
 ## withClaudeCode
@@ -29,9 +34,9 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ### Configuration
 
 ```typescript
-import { withClaudeCode } from '@mandible-ai/mandible';
+import { colony, withClaudeCode } from '@mandible-ai/mandible';
 
-colony('shaper', c => c
+colony('shaper')
   .sense('task:ready', { unclaimed: true })
   .do('shape-code', withClaudeCode({
     // Model tier alias ('fable' | 'opus' | 'sonnet' | 'haiku') or a full model ID.
@@ -77,8 +82,7 @@ colony('shaper', c => c
     autoWithdraw: true,
   }))
   .concurrency(2)
-  .claim('lease', 120_000)
-);
+  .claim('lease', 120_000);
 ```
 
 ### Dynamic prompts with context assembly
@@ -285,10 +289,10 @@ npm install ai @ai-sdk/anthropic   # or @ai-sdk/openai, @ai-sdk/google
 ### Configuration
 
 ```typescript
-import { withStructuredOutput } from '@mandible-ai/mandible';
+import { colony, withStructuredOutput } from '@mandible-ai/mandible';
 import { z } from 'zod';
 
-colony('critic', c => c
+colony('critic')
   .sense('artifact:shaped', { unclaimed: true })
   .do('review-code', withStructuredOutput({
     // Model tier alias or full ID (format depends on provider). Can be a function of the signal.
@@ -334,8 +338,7 @@ colony('critic', c => c
     },
 
     autoWithdraw: true,
-  }))
-);
+  }));
 ```
 
 ### Custom provider function
@@ -408,9 +411,9 @@ Runs shell commands for mechanical tasks — git merge, test runners, deploy scr
 ### Configuration
 
 ```typescript
-import { withBash } from '@mandible-ai/mandible';
+import { colony, withBash } from '@mandible-ai/mandible';
 
-colony('keeper', c => c
+colony('keeper')
   .sense('review:approved', { unclaimed: true })
   .do('merge-artifact', withBash({
     // Command — static string or async function
@@ -436,8 +439,7 @@ colony('keeper', c => c
     autoWithdraw: true,
   }))
   .concurrency(1)
-  .claim('exclusive')
-);
+  .claim('exclusive');
 ```
 
 ### Bash result

@@ -11,16 +11,19 @@
 // ============================================================
 
 import { mandible, FilesystemEnvironment, docker, type DockerHostMetadata } from '../../src/index.js';
+import { fileURLToPath } from 'node:url';
 import { SEED_TASKS } from './colonies.js';
 
 const env = new FilesystemEnvironment({ root: '/tmp/mandible-demo', name: 'code-pipeline' });
+const projectRoot = fileURLToPath(new URL('../../', import.meta.url));
+const module = fileURLToPath(new URL('./colonies.ts', import.meta.url));
 
 const host = await mandible('code-pipeline')
   .environment(env)
-  .host(docker({ image: 'mandible-colony:latest' }))
-  .colony('shaper', { module: './colonies.ts', export: 'shaper' })
-  .colony('critic', { module: './colonies.ts', export: 'critic' })
-  .colony('keeper', { module: './colonies.ts', export: 'keeper' })
+  .host(docker({ image: 'mandible-colony:latest', projectRoot }))
+  .colony('shaper', { module, export: 'shaper' })
+  .colony('critic', { module, export: 'critic' })
+  .colony('keeper', { module, export: 'keeper' })
   .start();
 
 const meta = host.metadata as DockerHostMetadata;

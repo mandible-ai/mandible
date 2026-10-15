@@ -167,7 +167,7 @@ const env = new FilesystemEnvironment({
 });
 
 const colonies = [
-  ...colony('pinger')
+  colony('pinger')
     .in(env)
     .sense('ping:request', { unclaimed: true })
     .do('ping', async (signal: Signal, ctx: ActionContext) => {
@@ -184,7 +184,7 @@ const colonies = [
     .poll(3000)
     .build(),
 
-  ...colony('ponger')
+  colony('ponger')
     .in(env)
     .sense('ping:response', { unclaimed: true })
     .do('pong', async (signal: Signal, ctx: ActionContext) => {
@@ -221,7 +221,7 @@ const env = new DoltEnvironment({
 });
 
 const colonies = [
-  ...colony('pinger')
+  colony('pinger')
     .in(env)
     .sense('ping:request', { unclaimed: true })
     .do('ping', async (signal: Signal, ctx: ActionContext) => {
@@ -238,7 +238,7 @@ const colonies = [
     .poll(3000)
     .build(),
 
-  ...colony('ponger')
+  colony('ponger')
     .in(env)
     .sense('ping:response', { unclaimed: true })
     .do('pong', async (signal: Signal, ctx: ActionContext) => {
@@ -276,7 +276,7 @@ const env = new GitHubEnvironment({
 });
 
 const colonies = [
-  ...colony('pinger')
+  colony('pinger')
     .in(env)
     .sense('ping:request', { unclaimed: true })
     .do('ping', async (signal: Signal, ctx: ActionContext) => {
@@ -293,7 +293,7 @@ const colonies = [
     .poll(3000)
     .build(),
 
-  ...colony('ponger')
+  colony('ponger')
     .in(env)
     .sense('ping:response', { unclaimed: true })
     .do('pong', async (signal: Signal, ctx: ActionContext) => {

@@ -41,10 +41,11 @@ async function simulateMerge(artifact: Record<string, unknown>) {
   return { merged: true, task: artifact.task, commitHash: Math.random().toString(36).slice(2, 10) };
 }
 
-// Colony configurators — passed to mandible().colony(name, configure)
+// Factories return configurators: pass shaper() locally, or reference the
+// 'shaper' export by module ref on hosts that cross process boundaries.
 
-export function shaper(c: ColonyBuilder) {
-  return c
+export function shaper() {
+  return (c: ColonyBuilder) => c
     .sense('task:ready', { unclaimed: true, minConcentration: 0.1 })
     .do('shape-code', async (signal: Signal, ctx: ActionContext) => {
       ctx.log(`Shaping: ${signal.payload.name}`);
@@ -61,8 +62,8 @@ export function shaper(c: ColonyBuilder) {
     .poll(1000);
 }
 
-export function critic(c: ColonyBuilder) {
-  return c
+export function critic() {
+  return (c: ColonyBuilder) => c
     .sense('artifact:shaped', { unclaimed: true, minConcentration: 0.1 })
     .do('review-code', async (signal: Signal, ctx: ActionContext) => {
       ctx.log(`Reviewing: ${signal.payload.task}`);
@@ -94,8 +95,8 @@ export function critic(c: ColonyBuilder) {
     .poll(1000);
 }
 
-export function keeper(c: ColonyBuilder) {
-  return c
+export function keeper() {
+  return (c: ColonyBuilder) => c
     .sense('review:approved', { unclaimed: true, minConcentration: 0.1 })
     .do('merge-artifact', async (signal: Signal, ctx: ActionContext) => {
       const artifact = (signal.payload as Record<string, any>).artifact ?? {};

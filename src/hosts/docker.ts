@@ -91,10 +91,7 @@ import { EventBus } from '@mandible-ai/mandible';
 import { colony } from '@mandible-ai/mandible';
 import { deserializeEnvironment } from '@mandible-ai/mandible';
 
-// Import all environment adapters so they self-register
-import '@mandible-ai/mandible/environments/filesystem/index.js';
-import '@mandible-ai/mandible/environments/github/index.js';
-import '@mandible-ai/mandible/environments/dolt/index.js';
+// The public root entrypoint imports and registers all bundled environments.
 
 const envConfig = JSON.parse(process.env.MANDIBLE_COLONY_CONFIG);
 const env = deserializeEnvironment(envConfig);

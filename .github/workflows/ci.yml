@@ -28,6 +28,9 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      - name: Check generated configs and packaged examples
+        run: npm run check:examples
+
       - name: Run tests
         run: npx vitest run
 
