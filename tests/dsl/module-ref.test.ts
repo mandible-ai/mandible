@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { mandible } from '../../src/dsl/mandible.js';
 import { FilesystemEnvironment } from '../../src/environments/filesystem/adapter.js';
 
@@ -34,30 +35,41 @@ async function writeColony(file: string): Promise<void> {
 }
 
 describe('module refs resolve from the working directory', () => {
+  it('builds the code-pipeline example from its exported factories', async () => {
+    const module = fileURLToPath(new URL('../../examples/code-pipeline/colonies.ts', import.meta.url));
+    const app = mandible('code-pipeline')
+      .environment(new FilesystemEnvironment({ root: join(root, 'signals'), name: 'test' }));
+    for (const name of ['shaper', 'critic', 'keeper']) {
+      app.colony(name, { module, export: name });
+    }
+    const definitions = await app.build();
+    expect(definitions.map(definition => definition.name)).toEqual(['shaper', 'critic', 'keeper']);
+    expect(definitions.map(definition => definition.sensors[0].query.type))
+      .toEqual(['task:ready', 'artifact:shaped', 'review:approved']);
+  });
+
   it('finds a colony next to the deploy that references it', async () => {
     await writeColony('worker.mjs');
 
-    const host = await mandible('demo')
+    const definitions = await mandible('demo')
       .environment(new FilesystemEnvironment({ root: join(root, 'signals'), name: 'test' }))
       // Exactly what the getting-started guide tells people to write. This used
       // to resolve inside node_modules/@mandible-ai/mandible/dist/src/dsl.
       .colony('worker', { module: './worker.mjs', export: 'configureWorker' })
-      .start();
+      .build();
 
-    expect(host.colonies.map(c => c.name)).toContain('worker');
-    await host.stop();
+    expect(definitions.map(c => c.name)).toContain('worker');
   });
 
   it('accepts an absolute path too', async () => {
     await writeColony('elsewhere.mjs');
 
-    const host = await mandible('demo')
+    const definitions = await mandible('demo')
       .environment(new FilesystemEnvironment({ root: join(root, 'signals'), name: 'test' }))
       .colony('worker', { module: join(root, 'elsewhere.mjs'), export: 'configureWorker' })
-      .start();
+      .build();
 
-    expect(host.colonies.map(c => c.name)).toContain('worker');
-    await host.stop();
+    expect(definitions.map(c => c.name)).toContain('worker');
   });
 
   it('says which export it wanted when the module has no such function', async () => {
@@ -67,7 +79,7 @@ describe('module refs resolve from the working directory', () => {
       mandible('demo')
         .environment(new FilesystemEnvironment({ root: join(root, 'signals'), name: 'test' }))
         .colony('worker', { module: './worker.mjs', export: 'configureMissing' })
-        .start(),
+        .build(),
     ).rejects.toThrow(/configureMissing/);
   });
 });

@@ -247,7 +247,7 @@ The sentinel deduplicates — each signal ID is only evaluated once (tracked in 
 ## Example: flag unsigned signals and alert
 
 ```typescript
-import { createSentinel, createBridge } from '@mandible-ai/mandible';
+import { colony, createRuntime, createSentinel } from '@mandible-ai/mandible';
 
 // Monitor the production environment
 const sentinel = createSentinel({
@@ -271,11 +271,14 @@ const sentinel = createSentinel({
 await sentinel.start();
 
 // A separate colony can react to sentinel reports
-colony('alerter', c => c
+const alerter = colony('alerter')
+  .in(prodEnv)
   .sense('sentinel:flagged', { unclaimed: true })
   .do('alert', async (signal, ctx) => {
     await sendSlackAlert(`Trust violation: ${signal.payload.signalType} — ${signal.payload.reason}`);
     await ctx.withdraw(signal.id);
   })
-);
+  .build();
+
+await createRuntime(alerter).start();
 ```

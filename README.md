@@ -65,20 +65,24 @@ No colony references any other colony. They coordinate entirely through signals 
 
 The **environment** (where signals live) is orthogonal to the **host** (where colony code runs). Colony definitions stay the same across all hosts, only the `.host()` call changes.
 
+These examples use `configureWorker` from [`colonies/worker.ts`](#colony-builder)
+below. Save that factory in your project first. A local host takes the callback
+returned by the factory; a Docker or Cloud module reference names the factory
+itself and passes any arguments through `args`.
+
 #### Local (default)
 
 Runs colonies as Node runtimes in the current process. This is the default when `.host()` is omitted:
 
 ```typescript
 import { mandible, FilesystemEnvironment } from '@mandible-ai/mandible';
+import { configureWorker } from './colonies/worker.js';
 
 const env = new FilesystemEnvironment({ root: './.mandible/signals' });
 
 const host = await mandible('code-pipeline')
   .environment(env)
-  .colony('shaper', shaper)
-  .colony('critic', critic)
-  .colony('keeper', keeper)
+  .colony('worker', configureWorker())
   .start();
 
 await host.stop();
@@ -96,14 +100,16 @@ const env = new FilesystemEnvironment({ root: './.mandible/signals' });
 const host = await mandible('code-pipeline')
   .environment(env)
   .host(docker({ image: 'mandible-colony:latest' }))
-  .colony('shaper', { module: './colonies.ts', export: 'shaper' })
-  .colony('critic', { module: './colonies.ts', export: 'critic' })
-  .colony('keeper', { module: './colonies.ts', export: 'keeper' })
+  .colony('worker', { module: './colonies/worker.ts', export: 'configureWorker' })
   .start();
 
 await host.dashboard(); // signal snapshots + colony names from containers
 await host.stop();
 ```
+
+Relative module paths resolve from the working directory where you run the
+deploy command, not from the installed SDK. The exported function must return
+a configurator `(builder) => builder`; do not export that callback directly.
 
 #### Cloud (microVMs)
 
@@ -118,9 +124,7 @@ const env = new FilesystemEnvironment({ root: './.mandible/signals' });
 const host = await mandible('code-pipeline')
   .environment(env)
   .host(cloud({ apiKey: process.env.MANDIBLE_API_KEY!, project: 'code-review' }))
-  .colony('shaper', shaper)
-  .colony('critic', critic)
-  .colony('keeper', keeper)
+  .colony('worker', { module: './colonies/worker.ts', export: 'configureWorker' })
   .start();
 
 await host.stop();
