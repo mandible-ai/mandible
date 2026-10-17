@@ -113,6 +113,7 @@ export class GitHubEnvironment implements SerializableEnvironment, CodeReviewabl
   private lastSyncAt: number = Date.now();
   private lastDecayAt: number = Date.now();
   private initialized = false;
+  private refreshing: Promise<void> | null = null;
 
   constructor(config: GitHubEnvConfig) {
     this.requiredSecrets = config.requiredSecrets ?? ['GITHUB_TOKEN'];
@@ -238,6 +239,32 @@ export class GitHubEnvironment implements SerializableEnvironment, CodeReviewabl
   }
 
   /**
+   * Refetch once the cache is older than the poll interval.
+   *
+   * A poll-mode sensor reaches GitHub only through observe(), so without this
+   * the cache is the repository as it was at the first sync, and a label added
+   * after a colony starts is never sensed. watch() keeps its own timer; this
+   * is the same cadence and rate-limit backoff for everything else. Callers
+   * that arrive while a refresh is running wait for it rather than starting
+   * another, so sensors polling on one tick cost one request.
+   */
+  private async ensureFresh(): Promise<void> {
+    if (!this.initialized) return this.ensureInit();
+    if (!this.refreshing) {
+      const backpressure = this.config.rateLimitBackpressure;
+      const interval = (this.config.pollInterval ?? 30_000) + this.client.getBackoffMs(
+        backpressure?.warningThreshold ?? 0.2,
+        backpressure?.criticalThreshold ?? 0.05,
+      );
+      if (Date.now() - this.lastSyncAt < interval) return;
+      this.refreshing = this.syncFromGitHub()
+        .then(() => undefined)
+        .finally(() => { this.refreshing = null; });
+    }
+    return this.refreshing;
+  }
+
+  /**
    * Core sync method. Fetches issues and PRs from GitHub and updates local cache.
    * Returns the list of new signal IDs that appeared since last sync.
    */
@@ -357,7 +384,7 @@ export class GitHubEnvironment implements SerializableEnvironment, CodeReviewabl
   // ----------------------------------------------------------
 
   async observe(query: SignalQuery): Promise<Signal[]> {
-    await this.ensureInit();
+    await this.ensureFresh();
     let matched = Array.from(this.signals.values()).filter(s => matchesQuery(s, query));
     if (query.limit) {
       matched = matched.slice(0, query.limit);

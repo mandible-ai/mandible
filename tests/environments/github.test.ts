@@ -752,6 +752,114 @@ describe('GitHubEnvironment — sync & observe', () => {
   });
 });
 
+// A poll-mode sensor only ever calls observe(). If observe() never refetches,
+// the colony sees the repository as it was at its first sync, forever: a label
+// added after startup is never sensed.
+describe('GitHubEnvironment — observe refreshes a stale cache', () => {
+  let prs: GitHubPullRequest[];
+  let prVersion: number;
+  let pullsRequests: number;
+  let pullsStatus: number;
+
+  function setPRs(next: GitHubPullRequest[]): void {
+    prs = next;
+    prVersion++;
+  }
+
+  beforeEach(() => {
+    prs = [];
+    prVersion = 0;
+    pullsRequests = 0;
+    pullsStatus = 200;
+    mockHandler = (req, res) => {
+      const url = req.url ?? '';
+      if (url.match(/\/pulls\/\d+\/reviews/)) {
+        res.writeHead(200, { 'Content-Type': 'application/json', ...rateLimitHeaders });
+        res.end('[]');
+        return;
+      }
+      if (url.includes('/pulls')) {
+        pullsRequests++;
+        if (pullsStatus !== 200) {
+          res.writeHead(pullsStatus, rateLimitHeaders);
+          res.end();
+          return;
+        }
+        const etag = `"prs-v${prVersion}"`;
+        if (req.headers['if-none-match'] === etag) {
+          res.writeHead(304, rateLimitHeaders);
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json', ETag: etag, ...rateLimitHeaders });
+        res.end(JSON.stringify(prs));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', ...rateLimitHeaders });
+      res.end('[]');
+    };
+  });
+
+  const labelled = { type: 'pr:open', tags: ['summarize'] };
+
+  it('senses a label added after the first observe once pollInterval has passed', async () => {
+    setPRs([makePR({ number: 7 })]);
+    const env = createEnv({ pollInterval: 30 });
+    expect(await env.observe(labelled)).toHaveLength(0);
+
+    setPRs([makePR({ number: 7, labels: [{ name: 'summarize' }] })]);
+    await new Promise(r => setTimeout(r, 50));
+
+    const sensed = await env.observe(labelled);
+    expect(sensed.map(s => s.id)).toEqual(['gh:test/repo#7']);
+  });
+
+  it('answers from the cache inside pollInterval', async () => {
+    setPRs([makePR({ number: 7 })]);
+    const env = createEnv({ pollInterval: 60_000 });
+    await env.observe({});
+    await env.observe({});
+    await env.observe({});
+    expect(pullsRequests).toBe(1);
+  });
+
+  // Several sensors poll on the same tick. They must cost GitHub one request.
+  it('shares one refresh between concurrent observes', async () => {
+    setPRs([makePR({ number: 7 })]);
+    const env = createEnv({ pollInterval: 30 });
+    await env.observe({});
+    await new Promise(r => setTimeout(r, 50));
+
+    await Promise.all([env.observe({}), env.observe({}), env.observe({})]);
+    expect(pullsRequests).toBe(2);
+  });
+
+  it('surfaces a failed refresh and retries it on the next observe', async () => {
+    setPRs([makePR({ number: 7 })]);
+    const env = createEnv({ pollInterval: 30 });
+    await env.observe({});
+    await new Promise(r => setTimeout(r, 50));
+
+    pullsStatus = 502;
+    await expect(env.observe(labelled)).rejects.toThrow(/502/);
+
+    pullsStatus = 200;
+    setPRs([makePR({ number: 7, labels: [{ name: 'summarize' }] })]);
+    expect(await env.observe(labelled)).toHaveLength(1);
+  });
+
+  it('keeps a claim made between refreshes', async () => {
+    setPRs([makePR({ number: 7 })]);
+    const env = createEnv({ pollInterval: 30 });
+    await env.observe({});
+    expect(await env.claim('gh:test/repo#7', 'summarizer')).toBe(true);
+    await new Promise(r => setTimeout(r, 50));
+
+    setPRs([makePR({ number: 7, title: 'retitled' })]);
+    expect(await env.observe({ unclaimed: true })).toHaveLength(0);
+  });
+});
+
 describe('GitHubEnvironment — concentration reinforcement', () => {
   it('reinforces with max(current, fresh) — never lowers concentration', async () => {
     const issue = makeIssue({ number: 1, updated_at: new Date().toISOString() });
