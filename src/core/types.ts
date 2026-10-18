@@ -56,6 +56,14 @@ export interface SignalMeta {
   /** Optional time-to-live in milliseconds. Signal evaporates after this. */
   ttl?: number;
 
+  /**
+   * Exempt from concentration decay and floor eviction. The signal keeps the
+   * concentration it was deposited with until its `ttl` (if any) expires or
+   * it is withdrawn. For standing state: a versioned layer, a run mark, a
+   * clock seed. Claim leases on it still expire.
+   */
+  persistent?: boolean;
+
   /** If claimed, which colony instance holds the claim */
   claimed_by?: string;
 
@@ -395,7 +403,7 @@ export interface ActionContext {
   deposit(
     type: string,
     payload?: Record<string, unknown>,
-    options?: { ttl?: number; tags?: string[]; causedBy?: string[] }
+    options?: { ttl?: number; tags?: string[]; causedBy?: string[]; persistent?: boolean }
   ): Promise<Signal>;
 
   /** Withdraw a signal (typically the one being processed) */

@@ -24,6 +24,7 @@ export function createSignal<T = Record<string, unknown>>(
     tags?: string[];
     caused_by?: string[];
     concentration?: number;
+    persistent?: boolean;
   }
 ): Signal<T> {
   const now = Date.now();
@@ -38,6 +39,7 @@ export function createSignal<T = Record<string, unknown>>(
       ttl: options?.ttl,
       tags: options?.tags,
       caused_by: options?.caused_by,
+      persistent: options?.persistent,
     },
   };
 }
@@ -109,12 +111,15 @@ export function matchType(signalType: string, pattern: string): boolean {
  * decayed (or deposited). Returns the new concentration value (does not
  * mutate the signal). Callers that write the result back must also set
  * `meta.decayed_at = now`, or the next sweep subtracts the same time twice.
+ * A persistent signal is returned at its current concentration: it never
+ * drains, so a floor check on the result never evicts it.
  */
 export function decayConcentration(
   signal: Signal,
   ratePerSecond: number,
   now: number = Date.now()
 ): number {
+  if (signal.meta.persistent) return signal.meta.concentration;
   const elapsedMs = now - (signal.meta.decayed_at ?? signal.meta.deposited_at);
   const elapsedSeconds = elapsedMs / 1000;
   const newConcentration = signal.meta.concentration - (ratePerSecond * elapsedSeconds);

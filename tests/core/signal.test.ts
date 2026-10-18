@@ -296,6 +296,14 @@ describe('matchesQuery — combined filters', () => {
 // ── decayConcentration ──────────────────────────────────────
 
 describe('decayConcentration', () => {
+  it('leaves a persistent signal at its current concentration', () => {
+    const s = makeSignal({
+      meta: { deposited_at: 0, concentration: 0.7, persistent: true },
+    });
+    // A day at 0.01/s would drain anything transient to 0.
+    expect(decayConcentration(s, 0.01, 86_400_000)).toBe(0.7);
+  });
+
   it('reduces concentration based on elapsed time', () => {
     const s = makeSignal({
       meta: { deposited_at: 1000, concentration: 1.0 },
